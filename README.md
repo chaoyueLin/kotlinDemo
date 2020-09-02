@@ -17,11 +17,14 @@
 			is HttpError -> throw HttpException(response.status)
 		}
 # 创建单例
+
 	object Resource {
 		val name = "Name"
 	}
+
 ## 伴生对象
 类内部的对象声明可以⽤ companion 关键字标记：
+
 	class MyClass {
 		companion object Factory {
 			fun create(): MyClass = MyClass()
@@ -69,7 +72,6 @@
 
 
 
-
 # 非空
 ## If not null 缩写
 
@@ -100,6 +102,16 @@ Kotlin 能够扩展⼀个类的新功能⽽⽆需继承该类或者使⽤像装�
 run、with 以及 apply 通过关键字 this 引用上下文对象。let 及 also 将上下文对象作为 lambda 表达式参数用it.
 ## 返回值
 apply 及 also 的返回值是上下文对象本身。因此，它们可以作为辅助步骤包含在调用链中：你可以继续在同一个对象上进行链式函数调用。let、run 及 with 返回 lambda 表达式的结果。
+
+# 接口
+
+	interface MyInterface {
+    	fun onLocationMeasured(location: Location)
+	}
+	val obj = object : MyInterface {
+    	override fun onLocationMeasured(location: Location) { ... }
+	}
+
 # 难点重点
 ## 类构造函数，初始化，属性构造
 ### 嵌套类，内部类inner，匿名内部类
