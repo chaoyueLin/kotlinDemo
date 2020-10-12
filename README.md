@@ -178,3 +178,52 @@ apply 及 also 的返回值是上下文对象本身。因此，它们可以作�
 ## 类构造函数，初始化，属性构造
 ### 嵌套类，内部类inner，匿名内部类
 ## 泛型
+## 协程
+Continutiaon续体表示挂起协程的在挂起点时的状态，可以用“剩余计算”来称呼。
+1.在执行suspend函数时，（CPS传递Continuation参数）挂起，暂时不执行剩下的协程代码
+2.当suspend函数执行完毕，通过Continuation参数的resume()进行回调，继续执行
+	
+	@SinceKotlin("1.3")
+	public interface Continuation<in T> {
+	    /**
+	     * The context of the coroutine that corresponds to this continuation.
+	     */
+	    public val context: CoroutineContext
+	
+	    /**
+	     * Resumes the execution of the corresponding coroutine passing a successful or failed [result] as the
+	     * return value of the last suspension point.
+	     */
+	    public fun resumeWith(result: Result<T>)
+	}
+	
+	/**
+	 * Classes and interfaces marked with this annotation are restricted when used as receivers for extension
+	 * `suspend` functions. These `suspend` extensions can only invoke other member or extension `suspend` functions on this particular
+	 * receiver and are restricted from calling arbitrary suspension functions.
+	 */
+	@SinceKotlin("1.3")
+	@Target(AnnotationTarget.CLASS)
+	@Retention(AnnotationRetention.BINARY)
+	public annotation class RestrictsSuspension
+	
+	/**
+	 * Resumes the execution of the corresponding coroutine passing [value] as the return value of the last suspension point.
+	 */
+	@SinceKotlin("1.3")
+	@InlineOnly
+	public inline fun <T> Continuation<T>.resume(value: T): Unit =
+	    resumeWith(Result.success(value))
+	
+	/**
+	 * Resumes the execution of the corresponding coroutine so that the [exception] is re-thrown right after the
+	 * last suspension point.
+	 */
+	@SinceKotlin("1.3")
+	@InlineOnly
+	public inline fun <T> Continuation<T>.resumeWithException(exception: Throwable): Unit =
+	    resumeWith(Result.failure(exception))
+
+### 状态机
+协程在挂起前，会先保存所有的局部变量以及在下次resume后要执行的代码片段（根据lable的值判断），这个保存状态和局部变量的对象就叫状态机
+考虑用状态机来实现协程是尽可能少的创建类和对象
