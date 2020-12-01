@@ -179,6 +179,20 @@ apply 及 also 的返回值是上下文对象本身。因此，它们可以作�
 # 泛型
 # 协程
 协程是一种脱离语言的概念，它是一种编程思想，并不局限于特定的语言。本质上来说。协程就是一段程序，它能够被挂起，待会儿再恢复执行。语言会对协程有自己的实现。
+
+协程(coroutine)的概念根据Donald Knuth的说法早在1958年就由Melvin Conway提出了，对应wikipedia的定义如下
+
+	Coroutines are computer program components that generalize subroutines for non-preemptive multitasking, by allowing execution to be suspended and resumed. Coroutines are well-suited for implementing familiar program components such as cooperative tasks, exceptions, event loops, iterators, infinite lists and pipes.
+
+子例程(subroutine)是一个概括性的术语，子例程可以是整个程序中的一个代码区块，当它被主程序调用的时候就会进入运行。例如函数就是子例程中的一种。协程相比子例程更加的灵活，允许执行过程中被挂起和恢复，多个协程可以一起相互协作执行任务。从协程(co + routine)名字上来拆解为支持协作(cooperate)的例程。
+## 进程、线程、协程的关系和比较
+
+* 进程是资源分配的最小单位，会拥有独立的地址空间以及对应的内存空间，还有网络和文件资源等，不同进程之间资源都是独立的，可以通过进程间通信（管道、共享内存、信号量等方式）来进行交互。
+* 线程为CPU调度的基本单位，除了拥有运行中必不可少的信息(如程序计数器、一组寄存器和栈)以外，本身并不拥有系统资源，所有线程会共享进程的资源，比如会共享堆资源。
+* 协程可以认为是运行在线程上的代码块，协程提供的挂起操作会使协程暂停执行，而不会导致线程阻塞。一个线程内部可以创建几千个协程都没有任何问题。
+* 进程的切换和线程切换中都包含了对应上下文的切换，这块都涉及到了内核来完成，即一次用户态到内核态的切换和一次内核态到用户态的切换。因为进程上下文切换保存的信息更多，所以进程切换代价会比线程切换代价更大。
+* 协程是一个纯用户态的并发机制，同一时刻只会有一个协程在运行，其他协程挂起等待；不同协程之间的切换不涉及内核，只用在用户态切换即可，所以切换代价更小，更轻量级，适合IO密集型的场景。
+
 ## kotlin协程
 在JVM的平台上，并灭有提供对协程的原生支持，完全依赖编译器技术支持。Kotlin协程在代码层面实现要基于线程池的工具API,所以Kotlin协程不属于广义上的协程，更像是一个线程框架。
 
