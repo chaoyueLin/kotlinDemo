@@ -178,8 +178,47 @@ apply 及 also 的返回值是上下文对象本身。因此，它们可以作�
 ## 嵌套类，内部类inner，匿名内部类
 # 泛型
 # 协程
-Continutiaon续体表示挂起协程的在挂起点时的状态，可以用“剩余计算”来称呼。
+协程是一种脱离语言的概念，它是一种编程思想，并不局限于特定的语言。本质上来说。协程就是一段程序，它能够被挂起，待会儿再恢复执行。语言会对协程有自己的实现。
+## kotlin协程
+在JVM的平台上，并灭有提供对协程的原生支持，完全依赖编译器技术支持。Kotlin协程在代码层面实现要基于线程池的工具API,所以Kotlin协程不属于广义上的协程，更像是一个线程框架。
+
+## kotlin协程原理
+* 挂起函数：suspend修饰标记的函数。挂起函数不能再常规代码中被调用，只能在其他挂起函数或是挂起lambda表达式中
+* 协程构建器：使用一些挂起lambda表达式作为参数来创建的一个协程的函数，如launch(),async()
+
+### CPS(Continuation-Passing-Style Transformation)
+	//编译前
+	suspend fun request():Int
+	//编译后
+	fun requesT(continuation:Continuation<T>):Any?
+
+* suspend函数都有一个Continuation类型的隐式参数，并且都能通过这个参数拿到一个Continuation类型对象
+* 返回类型变成Any,因为挂起函数被花旗，会返回COROUTINE_SUSPENDED;否则执行完毕直接返回一个结果或是异常，需要一个联合标识
+
+### Continutiaon续体,表示挂起协程的在挂起点时的状态，可以用“剩余计算”来称呼。
+剩余计算
+
+	val str =1024.toString()//#1
+	val length=str.length//#2
+	println(length)//#3
+
+加入吧#1，#2和#3分成两部分代码段，#2，#3的代码可以合并表示为println(x.length),然后改写成一个lambda表达式
+
+	{s:String->println(s.length)}
+这样，我们就可以通过把#1的结果传递给lambda来重新构建原始的形式：
+
+	{s:String->println(s.length)}.invoke(1024.toString())
+这个lambda表达式就是#1的Continuation,通过它的invoke方法可以执行剩余计算
+
+### 状态机
+挂起点：协成执行过程中可能被挂起的位置。可理解为剩余计算各种可能点。每一个挂起点和初始挂起点对应的Continuation都会转为为一种状态，协程恢复只是跳到下一种状态中。
+
+协程在挂起前，会先保存所有的局部变量以及在下次resume后要执行的代码片段（根据lable的值判断），这个保存状态和局部变量的对象就叫状态机
+考虑用状态机来实现协程是尽可能少的创建类和对象
+
+### 总结
 1.在执行suspend函数时，（CPS传递Continuation参数）挂起，暂时不执行剩下的协程代码
+
 2.当suspend函数执行完毕，通过Continuation参数的resume()进行回调，继续执行
 	
 	@SinceKotlin("1.3")
@@ -223,9 +262,6 @@ Continutiaon续体表示挂起协程的在挂起点时的状态，可以用“�
 	public inline fun <T> Continuation<T>.resumeWithException(exception: Throwable): Unit =
 	    resumeWith(Result.failure(exception))
 
-## 状态机
-协程在挂起前，会先保存所有的局部变量以及在下次resume后要执行的代码片段（根据lable的值判断），这个保存状态和局部变量的对象就叫状态机
-考虑用状态机来实现协程是尽可能少的创建类和对象
 # 空安全
 不可空
 
