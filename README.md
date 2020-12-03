@@ -342,6 +342,16 @@ coroutineScope()方法也可以创建scope. 当我们需要以结构化的方式
 * scope自动等待所有的子协程结束. 如果scope和一个parent协程绑定, 父协程会等待这个scope中所有的子协程完成.
 
 通过这种结构化的并发模式: 我们可以在创建top级别的协程时, 指定主要的context一次, 所有嵌套的协程会自动继承这个context, 只在有需要的时候进行修改即可.
+## 结构化并发async,"+"
+ async 被定义为了 CoroutineScope 上的扩展，我们需要将它写在作用域内，并且这是 coroutineScope 函数所提供的：
+
+	suspend fun concurrentSum(): Int = coroutineScope {
+	    val one = async { doSomethingUsefulOne() }
+	    val two = async { doSomethingUsefulTwo() }
+	    one.await() + two.await()
+	}
+
+这种情况下，如果在 concurrentSum 函数内部发生了错误，并且它抛出了一个异常， 所有在作用域中启动的协程都会被取消。
 # 空安全
 不可空
 
