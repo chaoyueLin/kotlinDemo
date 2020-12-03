@@ -276,7 +276,58 @@ apply 及 also 的返回值是上下文对象本身。因此，它们可以作�
 	@InlineOnly
 	public inline fun <T> Continuation<T>.resumeWithException(exception: Throwable): Unit =
 	    resumeWith(Result.failure(exception))
+## 启动协程
+### runBlocking，连接blocking和non-blocking的世界
+runBlocking用来连接阻塞和非阻塞的世界.
 
+runBlocking可以建立一个阻塞当前线程的协程. 所以它主要被用来在main函数中或者测试中使用, 作为连接函数.
+
+	fun main() = runBlocking<Unit> {
+	    // start main coroutine
+	    GlobalScope.launch {
+	        // launch a new coroutine in background and continue
+	        delay(1000L)
+	        println("World! + ${Thread.currentThread().name}")
+	    }
+	    println("Hello, + ${Thread.currentThread().name}") // main coroutine continues here immediately
+	    delay(2000L) // delaying for 2 seconds to keep JVM alive
+	}
+### launch
+返回Job，上面的例子delay了一段时间来等待一个协程结束, 不是一个好的方法.
+
+launch返回Job, 代表一个协程, 我们可以用Job的join()方法来显式地等待这个协程结束:
+
+	fun main() = runBlocking {
+	    val job = GlobalScope.launch {
+	        // launch a new coroutine and keep a reference to its Job
+	        delay(1000L)
+	        println("World! + ${Thread.currentThread().name}")
+	    }
+	    println("Hello, + ${Thread.currentThread().name}")
+	    job.join() // wait until child coroutine completes
+	}
+### async，从协程返回值
+async开启协程, 返回Deferred<T>, Deferred<T>是Job的子类, 有一个await()函数, 可以返回协程的结果.
+
+await()也是suspend函数, 只能在协程之内调用.
+
+	fun main() = runBlocking {
+	    // @coroutine#1
+	    println(Thread.currentThread().name)
+	    val deferred: Deferred<Int> = async {
+	        // @coroutine#2
+	        loadData()
+	    }
+	    println("waiting..." + Thread.currentThread().name)
+	    println(deferred.await()) // suspend @coroutine#1
+	}
+	
+	suspend fun loadData(): Int {
+	    println("loading..." + Thread.currentThread().name)
+	    delay(1000L) // suspend @coroutine#2
+	    println("loaded!" + Thread.currentThread().name)
+	    return 42
+	}
 ## Context, Dispatcher和Scope
 
 	public fun CoroutineScope.launch(
