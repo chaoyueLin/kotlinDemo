@@ -196,7 +196,7 @@ apply 及 also 的返回值是上下文对象本身。因此，它们可以作�
 ## kotlin协程
 在JVM的平台上，并灭有提供对协程的原生支持，完全依赖编译器技术支持。Kotlin协程在代码层面实现要基于线程池的工具API,所以Kotlin协程不属于广义上的协程，更像是一个线程框架。
 
-## kotlin协程原理
+### kotlin协程原理
 * 挂起函数：suspend修饰标记的函数。挂起函数不能再常规代码中被调用，只能在其他挂起函数或是挂起lambda表达式中
 * 协程构建器：使用一些挂起lambda表达式作为参数来创建的一个协程的函数，如launch(),async()
 * 在协程等待的过程中, 线程会返回线程池, 当协程等待结束, 协程会在线程池中一个空闲的线程上恢复. (The thread is returned to the pool while the coroutine is waiting, and when the waiting is done, the coroutine resumes on a free thread in the pool.)
@@ -378,13 +378,13 @@ API提供了几种选项:
 
 * 父协程被取消时, 所有的子协程都被取消.
 * 父协程永远会等待所有的子协程结束.
-* 
+
 值得注意的是, 也可以不启动协程就创建一个新的scope. 创建scope可以用工厂方法: MainScope()或CoroutineScope().
 
 coroutineScope()方法也可以创建scope. 当我们需要以结构化的方式在suspend函数内部启动新的协程, 我们创建的新的scope, 自动成为suspend函数被调用的外部scope的child.
 
 总结：A CoroutineScope keeps track of all your coroutines, and it can cancel all of the coroutines started in it.
-### Structured Concurrency
+### Structured Concurrency结构化并发，"+"
 这种利用scope将协程结构化组织起来的机制, 被称为"structured concurrency".
 好处是:
 
@@ -393,7 +393,7 @@ coroutineScope()方法也可以创建scope. 当我们需要以结构化的方式
 * scope自动等待所有的子协程结束. 如果scope和一个parent协程绑定, 父协程会等待这个scope中所有的子协程完成.
 
 通过这种结构化的并发模式: 我们可以在创建top级别的协程时, 指定主要的context一次, 所有嵌套的协程会自动继承这个context, 只在有需要的时候进行修改即可.
-## 结构化并发async,"+"
+
  async 被定义为了 CoroutineScope 上的扩展，我们需要将它写在作用域内，并且这是 coroutineScope 函数所提供的：
 
 	suspend fun concurrentSum(): Int = coroutineScope {
