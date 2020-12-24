@@ -562,8 +562,11 @@ coroutineScope()方法也可以创建scope. 当我们需要以结构化的方式
 	}
 
 这种情况下，如果在 concurrentSum 函数内部发生了错误，并且它抛出了一个异常， 所有在作用域中启动的协程都会被取消。
+
 ![](./CoroutineScope2.gif)
+
 #### SupervisorJob
+内部的取消操作是单向传播，子协程错误不会传播给父协程和它的兄弟协程。这个特性只作用直接子线程，其子线程遵守默认规则
 ![](./SupervisorJob.png)
 # 空安全
 不可空
