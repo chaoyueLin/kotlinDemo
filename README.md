@@ -328,7 +328,7 @@ await()也是suspend函数, 只能在协程之内调用.
 	    println("loaded!" + Thread.currentThread().name)
 	    return 42
 	}
-## Context, Dispatcher和Scope
+## CoroutineScope, CoroutineContext,CoroutineStart，Job
 
 	public fun CoroutineScope.launch(
 	    context: CoroutineContext = EmptyCoroutineContext,
@@ -341,7 +341,153 @@ await()也是suspend函数, 只能在协程之内调用.
 协程总是在一个context下运行, 类型是接口CoroutineContext. 协程的context是一个索引集合, 其中包含各种元素, 重要元素就有Job和dispatcher. 
 
 构建协程的coroutine builder: launch, async, 都是CoroutineScope类型的扩展方法. 查看CoroutineScope接口, 其中含有CoroutineContext的引用
+### CoroutineStart 启动模式
 
+	public enum class CoroutineStart {
+	   
+	    DEFAULT,
+	
+	    
+	    LAZY,
+	
+	   
+	    @ExperimentalCoroutinesApi
+	    ATOMIC,
+	
+	
+	    @ExperimentalCoroutinesApi
+	    UNDISPATCHED;
+	}
+
+* CoroutineStart.Default 不需要收到调用Job对象的join()或start()等方法，而是调用launch()方法的时候就会定执行协程体的代码
+* CoroutineStart.LAZY 一定要手动调用Job对象的join()或start()方法，否则协程体不会执行
+
+### CoroutineContext
+它包含用户定义的一些数据集合，这些数据与协程密切相关。它类似于map集合，可以通过key来获取不同类型的数据。
+
+	public interface CoroutineContext {
+	    /**
+	     * Returns the element with the given [key] from this context or `null`.
+	     */
+	    public operator fun <E : Element> get(key: Key<E>): E?
+	
+	    /**
+	     * Accumulates entries of this context starting with [initial] value and applying [operation]
+	     * from left to right to current accumulator value and each element of this context.
+	     */
+	    public fun <R> fold(initial: R, operation: (R, Element) -> R): R
+	
+	    /**
+	     * Returns a context containing elements from this context and elements from  other [context].
+	     * The elements from this context with the same key as in the other one are dropped.
+	     */
+	    public operator fun plus(context: CoroutineContext): CoroutineContext =
+	        if (context === EmptyCoroutineContext) this else // fast path -- avoid lambda creation
+	            context.fold(this) { acc, element ->
+	                val removed = acc.minusKey(element.key)
+	                if (removed === EmptyCoroutineContext) element else {
+	                    // make sure interceptor is always last in the context (and thus is fast to get when present)
+	                    val interceptor = removed[ContinuationInterceptor]
+	                    if (interceptor == null) CombinedContext(removed, element) else {
+	                        val left = removed.minusKey(ContinuationInterceptor)
+	                        if (left === EmptyCoroutineContext) CombinedContext(element, interceptor) else
+	                            CombinedContext(CombinedContext(left, element), interceptor)
+	                    }
+	                }
+	            }
+	
+	    /**
+	     * Returns a context containing elements from this context, but without an element with
+	     * the specified [key].
+	     */
+	    public fun minusKey(key: Key<*>): CoroutineContext
+	
+	    /**
+	     * Key for the elements of [CoroutineContext]. [E] is a type of element with this key.
+	     */
+	    public interface Key<E : Element>
+	
+	    /**
+	     * An element of the [CoroutineContext]. An element of the coroutine context is a singleton context by itself.
+	     */
+	    public interface Element : CoroutineContext {
+	        /**
+	         * A key of this coroutine context element.
+	         */
+	        public val key: Key<*>
+	
+	        public override operator fun <E : Element> get(key: Key<E>): E? =
+	            @Suppress("UNCHECKED_CAST")
+	            if (this.key == key) this as E else null
+	
+	        public override fun <R> fold(initial: R, operation: (R, Element) -> R): R =
+	            operation(initial, this)
+	
+	        public override fun minusKey(key: Key<*>): CoroutineContext =
+	            if (this.key == key) EmptyCoroutineContext else this
+	    }
+	}
+
+Job,Dispatchers,CoroutineName,CoroutineExceptionHandler都实现了Element接口。
+
+如果需要结合不同的CoroutineContext可以直接通过+拼接，本质就是使用了plus方法。
+
+	class CoroutineName(val name: String) : CoroutineContext.Element {
+		// companion object 是一个类对象，理所应当的，它能继承其他类
+	    companion object : CoroutineContext.Key<CoroutineName>
+	    override val key = CoroutineName
+	}
+	
+	fun main() = runBlocking {
+	    GlobalScope.launch(Dispatchers.IO + CoroutineName("my coroutine")) {
+	    	// CoroutineName 的 companion object 继承的是 Key<CoroutineName>，
+	    	// 所以 coroutineContext[CoroutineName] 的类型是 CoroutineName？
+	        val name = coroutineContext[CoroutineName]?.name ?: "no name"
+	        println("name = $name")
+	    }
+	    Unit
+	}
+	// 打印：
+	// name = my coroutine
+	
+	// 或者更常见的：
+	// 这里的 + 使用的是 CoroutineContext 里定义的 operator plus
+	someCoroutineScope.launch(Dispatchers.IO + CoroutineName("my coroutine")) {
+	    val name = coroutineContext[CoroutineName]?.name ?: return
+	    // ...
+	}
+
+由于这种定义 context 是固定的模型，kotlin 还提供了一个便捷类AbstractCoroutineContextElement,内部类CombinedContext左向链表
+
+	class CoroutineName(val name: String) : AbstractCoroutineContextElement(CoroutineName) {
+	    companion object : CoroutineContext.Key<CoroutineName>
+	}
+	...
+	internal class CombinedContext(
+	    private val left: CoroutineContext,
+	    private val element: Element
+	) : CoroutineContext, Serializable {
+	
+	    override fun <E : Element> get(key: Key<E>): E? {
+	        var cur = this
+	        while (true) {
+	            cur.element[key]?.let { return it }
+	            val next = cur.left
+	            if (next is CombinedContext) {
+	                cur = next
+	            } else {
+	                return next[key]
+	            }
+	        }
+	    }
+
+![](./CombinedContext.jpg)
+![](./CombinedContext2.png)
+### Job
+Job对象表示一个协程作业，是协程的唯一标识，并负责管理协程的生命周期。它还可以由层级关系，一个Job可以包含多个字Job，Job 经历以下一系列状态：新建、活动、正在完成、已完成、正在取消和已取消状态。虽然我们无法访问状态本身，但可以访问Job 的属性: isActive 、isCancelled 和 isCompleted 。
+![](./job.png)
+
+如果协程处于活动状态，则协程失败或调用job.cancel()方法将使Job处于取消状态( isActive = false, iscancel = true )。一旦所有的子协程完成了他们的工作，协程将进入取消状态并且 isCompleted = true 。
 ### Dispatchers和线程
 Context中的CoroutineDispatcher可以指定协程运行在什么线程上. 可以是一个指定的线程, 线程池, 或者不限.
 
@@ -373,6 +519,7 @@ API提供了几种选项:
 
 * 我们开启一个协程的时候, 总是在一个CoroutineScope里.
 * Scope用来管理不同协程之间的父子关系和结构.
+![](./CoroutineScope.png)
 
 协程的父子关系有以下两个特性:
 
@@ -384,7 +531,19 @@ API提供了几种选项:
 coroutineScope()方法也可以创建scope. 当我们需要以结构化的方式在suspend函数内部启动新的协程, 我们创建的新的scope, 自动成为suspend函数被调用的外部scope的child.
 
 总结：A CoroutineScope keeps track of all your coroutines, and it can cancel all of the coroutines started in it.
-### Structured Concurrency结构化并发，"+"
+
+
+### CoroutineContext计算
+协程上下文是基于这个公式计算的：父级上下文 = 默认值 + 继承的上下文 + 参数
+
+* 某些元素具有默认值，如 Dispatchers.Default 是协程调度器（ CoroutineDispatcher ）的默认值，“coroutine”是 CoroutineName 的默认值。
+* 协程会继承创建它的协程作用域或协程的 CoroutineContext 。
+* 在协程构建器中传递的参数会优先于继承的 CoroutineContext 中的元素。
+
+![](./CoroutineContext.png)
+
+![](./CoroutineContext2.png)
+### Structured Concurrency结构化并发
 这种利用scope将协程结构化组织起来的机制, 被称为"structured concurrency".
 好处是:
 
@@ -403,6 +562,9 @@ coroutineScope()方法也可以创建scope. 当我们需要以结构化的方式
 	}
 
 这种情况下，如果在 concurrentSum 函数内部发生了错误，并且它抛出了一个异常， 所有在作用域中启动的协程都会被取消。
+![](./CoroutineScope2.gif)
+#### SupervisorJob
+![](./SupervisorJob.png)
 # 空安全
 不可空
 

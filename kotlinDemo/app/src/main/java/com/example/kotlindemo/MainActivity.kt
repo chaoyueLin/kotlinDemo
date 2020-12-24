@@ -1,20 +1,20 @@
 package com.example.kotlindemo
 
+import android.content.Intent
 import androidx.appcompat.app.AppCompatActivity
 import android.os.Bundle
-import androidx.recyclerview.widget.LinearLayoutManager
+import android.widget.Button
 
-import kotlinx.android.synthetic.activity_main.*
-import okhttp3.OkHttpClient
 
 class MainActivity : AppCompatActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
-        forecastList.layoutManager= LinearLayoutManager(this)
-
-        OkHttpClient
-
+        val button2: Button = findViewById(R.id.button2)
+        button2.setOnClickListener {
+            val intent: Intent = Intent(this@MainActivity, CoruntineActivity::class.java)
+            startActivity(intent)
+        }
     }
 }
