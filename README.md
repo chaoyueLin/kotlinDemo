@@ -93,7 +93,8 @@
 	}
 
 # 扩展
-Kotlin 能够扩展⼀个类的新功能⽽⽆需继承该类或者使⽤像装饰者这样的设计模式。 这通过叫做扩展的特殊声明完成。
+Kotlin能够扩展⼀个类的新功能⽽⽆需继承该类或者使⽤像装饰者这样的设计模式。 这通过叫做扩展的特殊声明完成。
+
 ## 扩展函数
 
 # 作用域函数 apply/with/run/also/let
@@ -568,6 +569,13 @@ coroutineScope()方法也可以创建scope. 当我们需要以结构化的方式
 #### SupervisorJob
 内部的取消操作是单向传播，子协程错误不会传播给父协程和它的兄弟协程。这个特性只作用直接子线程，其子线程遵守默认规则
 ![](./SupervisorJob.png)
+### CoroutineExceptionHandler
+* 抛出 CancellationException 或者调用cancel()只会取消当前协程和子协程，不会取消父协程，也不会其他例如打印堆栈信息等的异常处理操作。
+* 抛出未捕获的非 CancellationException 异常会取消子协程和自己，也会取消父协程，一直取消 root 协程，异常也会由 root 协程处理。
+* 如果使用了 SupervisorJob 或 supervisorScope，子协程抛出未捕获的非 CancellationException 异常不会取消父协程，异常也会由子协程自己处理。
+* launch式协程和actor式协程默认处理异常的方式只是打印堆栈信息，可以自定义 CoroutineExceptionHandler 来处理异常。
+* async式协程本身不会处理异常，自定义 CoroutineExceptionHandler 也无效，但是会在await()恢复调用者协程时重新抛出异常。
+
 # 空安全
 不可空
 

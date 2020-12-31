@@ -12,9 +12,7 @@
 package com.example.kotlindemo
 
 import android.util.Log
-import kotlinx.coroutines.CoroutineName
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.Job
+import kotlinx.coroutines.*
 
 /*****************************************************************
  * * File: - CorContextDemo
@@ -38,6 +36,24 @@ class CorContextDemo {
         context = context.minusKey(Job)
         Log.d(TAG, "$context")
 
+    }
+    fun main() = runBlocking {
+        val job = GlobalScope.launch { // launch 根协程
+            println("Throwing exception from launch")
+            throw IndexOutOfBoundsException() // 我们将在控制台打印 Thread.defaultUncaughtExceptionHandler
+        }
+        job.join()
+        println("Joined failed job")
+        val deferred = GlobalScope.async { // async 根协程
+            println("Throwing exception from async")
+            throw ArithmeticException() // 没有打印任何东西，依赖用户去调用等待
+        }
+        try {
+            deferred.await()
+            println("Unreached")
+        } catch (e: ArithmeticException) {
+            println("Caught ArithmeticException")
+        }
     }
 
 }

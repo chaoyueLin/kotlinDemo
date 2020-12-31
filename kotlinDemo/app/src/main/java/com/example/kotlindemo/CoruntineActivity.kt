@@ -29,6 +29,7 @@ class CoruntineActivity : AppCompatActivity() {
                 release()
         })
         CorContextDemo().test()
+//        CorContextDemo().main()
     }
 
     suspend fun start() {
