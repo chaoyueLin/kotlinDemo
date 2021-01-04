@@ -329,7 +329,7 @@ await()也是suspend函数, 只能在协程之内调用.
 	    println("loaded!" + Thread.currentThread().name)
 	    return 42
 	}
-## CoroutineScope, CoroutineContext,CoroutineStart，Job
+## CoroutineScope, CoroutineContext,CoroutineStart，Job，CoroutineExceptionHandler
 
 	public fun CoroutineScope.launch(
 	    context: CoroutineContext = EmptyCoroutineContext,
@@ -570,12 +570,131 @@ coroutineScope()方法也可以创建scope. 当我们需要以结构化的方式
 内部的取消操作是单向传播，子协程错误不会传播给父协程和它的兄弟协程。这个特性只作用直接子线程，其子线程遵守默认规则
 ![](./SupervisorJob.png)
 ### CoroutineExceptionHandler
+
+	fun main() = runBlocking {
+	        val job = GlobalScope.launch { // launch 根协程
+	            println("Throwing exception from launch")
+	            throw IndexOutOfBoundsException() // 我们将在控制台打印 Thread.defaultUncaughtExceptionHandler
+	        }
+	        job.join()
+	        println("Joined failed job")
+	        val deferred = GlobalScope.async { // async 根协程
+	            println("Throwing exception from async")
+	            throw ArithmeticException() // 没有打印任何东西，依赖用户去调用等待
+	        }
+	        try {
+	            deferred.await()
+	            println("Unreached")
+	        } catch (e: ArithmeticException) {
+	            println("Caught ArithmeticException")
+	        }
+	    }
+
+
 * 抛出 CancellationException 或者调用cancel()只会取消当前协程和子协程，不会取消父协程，也不会其他例如打印堆栈信息等的异常处理操作。
 * 抛出未捕获的非 CancellationException 异常会取消子协程和自己，也会取消父协程，一直取消 root 协程，异常也会由 root 协程处理。
 * 如果使用了 SupervisorJob 或 supervisorScope，子协程抛出未捕获的非 CancellationException 异常不会取消父协程，异常也会由子协程自己处理。
 * launch式协程和actor式协程默认处理异常的方式只是打印堆栈信息，可以自定义 CoroutineExceptionHandler 来处理异常。
 * async式协程本身不会处理异常，自定义 CoroutineExceptionHandler 也无效，但是会在await()恢复调用者协程时重新抛出异常。
 
+## 协程在Android中应用
+我们在Activity或Fragment中使用协程时，要尽量避免使用GlobalScope。GlobalScope是生命周期是process级别的，所以上面的例子中，即使Activity或Fragment已经被销毁，协程仍然在执行。
+
+### viewModelScope
+
+	class MainViewModel : ViewModel() {
+	    // Make a network request without blocking the UI thread
+	    private fun makeNetworkRequest() {
+	       // launch a coroutine in viewModelScope 
+	        viewModelScope.launch(Dispatchers.IO) {
+	            // slowFetch()
+	        }
+	    }
+	
+	    // No need to override onCleared()
+	}
+
+### lifecycleScope
+
+	class MainActivity : AppCompatActivity() {
+	    override fun onCreate(savedInstanceState: Bundle?) {
+	        super.onCreate(savedInstanceState)
+	        setContentView(R.layout.activity_main)
+	        setSupportActionBar(toolbar)
+	
+	        lifecycleScope.launch { 
+	            val data = withContext(Dispatchers.IO) {
+	                loadData()
+	            }
+	            initUi(data)
+	        }
+	    }
+	    ...
+	}
+	
+	class MyFragment: Fragment() {
+	    override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
+	        super.onViewCreated(view, savedInstanceState)
+	        viewLifecycleOwner.lifecycleScope.launch { 
+	            val data = withContext(Dispatchers.IO) {
+	                loadData()
+	            }
+	            initUi(data)
+	        }
+	    }
+	    ...
+	}
+
+特定生命周期阶段
+
+尽管scope提供了自动取消的方式, 你可能还有一些需求需要限制在更加具体的生命周期内.
+
+比如, 为了做FragmentTransaction, 你必须等到Lifecycle至少是STARTED.
+
+上面的例子中, 如果需要打开一个新的fragment:
+
+	fun onCreate() {
+	    lifecycleScope.launch {
+	        val note = userViewModel.loadNote()
+	        fragmentManager.beginTransaction()....commit() //IllegalStateException
+	    }
+	}
+
+很容易发生IllegalStateException.
+
+Lifecycle提供了:
+lifecycle.whenCreated, lifecycle.whenStarted, lifecycle.whenResumed.
+
+如果没有至少达到所要求的最小生命周期, 在这些块中启动的协程任务, 将会suspend.
+
+	fun onCreate() {
+	    lifecycleScope.launchWhenStarted {
+	        val note = userViewModel.loadNote()
+	        fragmentManager.beginTransaction()....commit()
+	    }
+	}
+
+### LiveData
+
+	class MyViewModel: ViewModel() {
+	    private val userId: LiveData<String> = MutableLiveData()
+	    val user = userId.switchMap { id ->
+	        liveData(context = viewModelScope.coroutineContext + Dispatchers.IO) {
+	            emit(database.loadUserById(id))
+	        }
+	    }
+	}
+
+### Retrofit 
+Retrofit从2.6.0开始提供了对协程的支持.
+定义方法的时候加上suspend关键字:
+
+	interface GitHubService {
+	    @GET("orgs/{org}/repos?per_page=100")
+	    suspend fun getOrgRepos(
+	        @Path("org") org: String
+	    ): List<Repo>
+	}
 # 空安全
 不可空
 

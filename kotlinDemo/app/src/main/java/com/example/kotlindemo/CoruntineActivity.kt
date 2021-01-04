@@ -10,6 +10,7 @@ import java.lang.Runnable
 
 
 class CoruntineActivity : AppCompatActivity() {
+    private val mainScope= MainScope()
     companion object {
         val TAG = "CoruntineActivity"
     }
@@ -28,8 +29,10 @@ class CoruntineActivity : AppCompatActivity() {
         button.setOnClickListener(View.OnClickListener {
                 release()
         })
-        CorContextDemo().test()
+//        CorContextDemo().test()
 //        CorContextDemo().main()
+
+
     }
 
     suspend fun start() {
@@ -57,6 +60,11 @@ class CoruntineActivity : AppCompatActivity() {
         } catch (e: IllegalStateException) {
             Log.d(TAG, Thread.currentThread().name + " IllegalStateException" + e.message)
         }
+    }
+
+    override fun onDestroy() {
+        super.onDestroy()
+        mainScope.cancel()
     }
 
 }
