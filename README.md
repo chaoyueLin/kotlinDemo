@@ -96,6 +96,7 @@
 Kotlin能够扩展⼀个类的新功能⽽⽆需继承该类或者使⽤像装饰者这样的设计模式。 这通过叫做扩展的特殊声明完成。
 
 ## 扩展函数
+类添加静态方法
 
 # 作用域函数 apply/with/run/also/let
 唯一目的是在对象的上下文中执行代码块。当对一个对象调用这样的函数并提供一个 lambda 表达式时，它会形成一个临时作用域。在此作用域中，可以访问该对象而无需其名称。这些函数称为作用域函数。
@@ -176,6 +177,59 @@ apply 及 also 的返回值是上下文对象本身。因此，它们可以作�
 	}
 
 # 类构造函数，初始化，属性构造
+## lazy
+
+lazy 传入的是一个lambda表达式，其中UnsafeLazyImpl是不安全的，SynchronizedLazyImpl用Synchronize实现安全，SynchronizedLazyImpl是通过AtomicReferenceFieldUpdater实现安全
+
+	public actual fun <T> lazy(mode: LazyThreadSafetyMode, initializer: () -> T): Lazy<T> =
+	    when (mode) {
+	        LazyThreadSafetyMode.SYNCHRONIZED -> SynchronizedLazyImpl(initializer)SafePublicationLazyImpl
+	        LazyThreadSafetyMode.PUBLICATION -> SafePublicationLazyImpl(initializer)
+	        LazyThreadSafetyMode.NONE -> UnsafeLazyImpl(initializer)
+	    }
+
+
+	private class SafePublicationLazyImpl<out T>(initializer: () -> T) : Lazy<T>, Serializable {
+	    @Volatile private var initializer: (() -> T)? = initializer
+	    @Volatile private var _value: Any? = UNINITIALIZED_VALUE
+	    // this final field is required to enable safe publication of constructed instance
+	    private val final: Any = UNINITIALIZED_VALUE
+	
+	    override val value: T
+	        get() {
+	            val value = _value
+	            if (value !== UNINITIALIZED_VALUE) {
+	                @Suppress("UNCHECKED_CAST")
+	                return value as T
+	            }
+	
+	            val initializerValue = initializer
+	            // if we see null in initializer here, it means that the value is already set by another thread
+	            if (initializerValue != null) {
+	                val newValue = initializerValue()
+	                if (valueUpdater.compareAndSet(this, UNINITIALIZED_VALUE, newValue)) {
+	                    initializer = null
+	                    return newValue
+	                }
+	            }
+	            @Suppress("UNCHECKED_CAST")
+	            return _value as T
+	        }
+	
+	    override fun isInitialized(): Boolean = _value !== UNINITIALIZED_VALUE
+	
+	    override fun toString(): String = if (isInitialized()) value.toString() else "Lazy value not initialized yet."
+	
+	    private fun writeReplace(): Any = InitializedLazyImpl(value)
+	
+	    companion object {
+	        private val valueUpdater = java.util.concurrent.atomic.AtomicReferenceFieldUpdater.newUpdater(
+	            SafePublicationLazyImpl::class.java,
+	            Any::class.java,
+	            "_value"
+	        )
+	    }
+	}
 ## 嵌套类，内部类inner，匿名内部类
 # 泛型
 # 协程
