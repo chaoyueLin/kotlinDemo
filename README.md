@@ -31,7 +31,8 @@
 		}
 	}
 
-可以省略伴⽣对象的名称，在这种情况下将使⽤名称 Companion ：
+可以省略伴⽣对象的名称，在这种情况下将使⽤名称 
+
 	class MyClass {
 		companion object { }
 	}
@@ -177,6 +178,12 @@ apply 及 also 的返回值是上下文对象本身。因此，它们可以作�
 	}
 
 # 类构造函数，初始化，属性构造
+## lateinit var 
+
+* lateinit var只能用来修饰类属性，不能用来修饰局部变量，并且只能用来修饰对象，不能用来修饰基本类型(因为基本类型的属性在类加载后的准备阶段都会被初始化为默认值)。
+* lateinit var的作用也比较简单，就是让编译期在检查时不要因为属性变量未被初始化而报错。
+* Kotlin相信当开发者显式使用lateinit var 关键字的时候，他一定也会在后面某个合理的时机将该属性对象初始化的(然而，谁知道呢，也许他用完才想起还没初始化)。
+
 ## lazy
 
 lazy 传入的是一个lambda表达式，其中UnsafeLazyImpl是不安全的，SynchronizedLazyImpl用Synchronize实现安全，SynchronizedLazyImpl是通过AtomicReferenceFieldUpdater实现安全
@@ -230,6 +237,106 @@ lazy 传入的是一个lambda表达式，其中UnsafeLazyImpl是不安全的，S
 	        )
 	    }
 	}
+
+
+## 单例模式
+### 饿汉式实现
+	//Java实现
+	public class SingletonDemo {
+	    private static SingletonDemo instance=new SingletonDemo();
+	    private SingletonDemo(){
+	
+	    }
+	    public static SingletonDemo getInstance(){
+	        return instance;
+	    }
+	}
+	//Kotlin实现
+	object SingletonDemo
+
+### 懒汉式
+
+	//Java实现
+	public class SingletonDemo {
+	    private static SingletonDemo instance;
+	    private SingletonDemo(){}
+	    public static SingletonDemo getInstance(){
+	        if(instance==null){
+	            instance=new SingletonDemo();
+	        }
+	        return instance;
+	    }
+	}
+	//Kotlin实现
+	class SingletonDemo private constructor() {
+	    companion object {
+	        private var instance: SingletonDemo? = null
+	            get() {
+	                if (field == null) {
+	                    field = SingletonDemo()
+	                }
+	                return field
+	            }
+	        fun get(): SingletonDemo{
+	        //细心的小伙伴肯定发现了，这里不用getInstance作为为方法名，是因为在伴生对象声明时，内部已有getInstance方法，所以只能取其他名字
+	         return instance!!
+	        }
+	    }
+	}
+
+
+### 双重校验锁式（Double Check)
+
+	//Java实现
+	public class SingletonDemo {
+	    private volatile static SingletonDemo instance;
+	    private SingletonDemo(){} 
+	    public static SingletonDemo getInstance(){
+	        if(instance==null){
+	            synchronized (SingletonDemo.class){
+	                if(instance==null){
+	                    instance=new SingletonDemo();
+	                }
+	            }
+	        }
+	        return instance;
+	    }
+	}
+	//kotlin实现
+	class SingletonDemo private constructor() {
+	    companion object {
+	        val instance: SingletonDemo by lazy(mode = LazyThreadSafetyMode.SYNCHRONIZED) {
+	        SingletonDemo() }
+	    }
+	}
+
+### 静态内部类
+
+	//Java实现
+	public class SingletonDemo {
+	    private static class SingletonHolder{
+	        private static SingletonDemo instance=new SingletonDemo();
+	    }
+	    private SingletonDemo(){
+	        System.out.println("Singleton has loaded");
+	    }
+	    public static SingletonDemo getInstance(){
+	        return SingletonHolder.instance;
+	    }
+	}
+	//kotlin实现
+	class SingletonDemo private constructor() {
+	    companion object {
+	        val instance = SingletonHolder.holder
+	    }
+	
+	    private object SingletonHolder {
+	        val holder= SingletonDemo()
+	    }
+	
+	}
+
+
 ## 嵌套类，内部类inner，匿名内部类
 # 泛型
 # 协程
