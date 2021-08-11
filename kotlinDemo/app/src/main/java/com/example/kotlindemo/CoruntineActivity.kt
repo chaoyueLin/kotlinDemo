@@ -6,16 +6,38 @@ import android.util.Log
 import android.view.View
 import android.widget.Button
 import kotlinx.coroutines.*
+import kotlinx.coroutines.flow.collect
+import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.flow.flowOn
+import kotlinx.coroutines.flow.zip
 import java.lang.Runnable
+import java.lang.Thread.sleep
 
 
 class CoruntineActivity : AppCompatActivity() {
-    private val mainScope= MainScope()
+    private val mainScope = MainScope()
+
     companion object {
         val TAG = "CoruntineActivity"
     }
 
     private lateinit var mScope: CoroutineScope
+
+    val task1: () -> String = {
+        sleep(2000)
+        "Hello".also { println("task1 finished: $it") }
+    }
+
+    val task2: () -> String = {
+        sleep(2000)
+        "World".also { println("task2 finished: $it") }
+    }
+
+    val task3: (String, String) -> String = { p1, p2 ->
+        sleep(2000)
+        "$p1 $p2".also { println("task3 finished: $it") }
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_coruntine)
@@ -25,17 +47,39 @@ class CoruntineActivity : AppCompatActivity() {
         mScope.launch(CoroutineName("initCoroutine")) {
             start()
         }
+
+        val flow1 = flow<String> { emit(task1()) }
+        val flow2 = flow<String> { emit(task2()) }
         val button: Button = findViewById(R.id.button)
-        button.setOnClickListener(View.OnClickListener {
-                release()
-        })
+        button.setOnClickListener {
+//            release()
+//            GlobalScope.launch(Dispatchers.IO) {
+//                val c1 = async(Dispatchers.IO) {
+//                    task1()
+//                }
+//
+//                val c2 = async(Dispatchers.IO) {
+//                    task2()
+//                }
+//
+//                task3(c1.await(), c2.await())
+//            }
+
+            GlobalScope.launch(Dispatchers.IO) {
+                flow1.zip(flow2) { t1, t2 ->
+                    task3(t1, t2)
+                }.collect { value -> println(value) }
+            }
+
+
+        }
 //        CorContextDemo().test()
 //        CorContextDemo().main()
 
 
     }
 
-    suspend fun start() {
+    private suspend fun start(): Int {
         return withContext(Dispatchers.Default) {
             Log.d(TAG, Thread.currentThread().name + " sleep before")
             Thread(Runnable {
@@ -55,7 +99,10 @@ class CoruntineActivity : AppCompatActivity() {
             Log.d(TAG, Thread.currentThread().name + " mScope.isActive=" + mScope.isActive)
             if (mScope.isActive) {
                 mScope.cancel("release engine", null)
-                Log.d(TAG, Thread.currentThread().name + "cancel mScope.isActive=" + mScope.isActive)
+                Log.d(
+                    TAG,
+                    Thread.currentThread().name + "cancel mScope.isActive=" + mScope.isActive
+                )
             }
         } catch (e: IllegalStateException) {
             Log.d(TAG, Thread.currentThread().name + " IllegalStateException" + e.message)

@@ -759,9 +759,61 @@ coroutineScope()方法也可以创建scope. 当我们需要以结构化的方式
 * async式协程本身不会处理异常，自定义 CoroutineExceptionHandler 也无效，但是会在await()恢复调用者协程时重新抛出异常。
 
 ## 协程在Android中应用
-我们在Activity或Fragment中使用协程时，要尽量避免使用GlobalScope。GlobalScope是生命周期是process级别的，所以上面的例子中，即使Activity或Fragment已经被销毁，协程仍然在执行。
+
+我们先定义三个Task，模拟上述场景， Task3 基于 Task1、Task2 返回的结果拼接字符串，每个 Task 通过 sleep 模拟耗时
+
+	val task1: () -> String = {
+	    sleep(2000)
+	    "Hello".also { println("task1 finished: $it") }
+	}
+	
+	val task2: () -> String = {
+	    sleep(2000)
+	    "World".also { println("task2 finished: $it") }
+	}
+	
+	val task3: (String, String) -> String = { p1, p2 ->
+	    sleep(2000)
+	    "$p1 $p2".also { println("task3 finished: $it") }
+	}
+
+	@Test
+	fun test_coroutine() {
+	
+	    runBlocking {
+	        val c1 = async(Dispatchers.IO) {
+	            task1()
+	        }
+	
+	        val c2 = async(Dispatchers.IO) {
+	            task2()
+	        }
+	
+	        task3(c1.await(), c2.await())
+	    }
+	}
+
+	@Test
+	fun test_flow() {
+	
+	    val flow1 = flow<String> { emit(task1()) }
+	    val flow2 = flow<String> { emit(task2()) }
+	
+	    runBlocking {
+	         flow1.zip(flow2) { t1, t2 ->
+	             task3(t1, t2)
+	        }.flowOn(Dispatchers.IO)
+	        .collect{  }
+	
+	    }
+	
+	}
+
 
 ### viewModelScope
+
+我们在Activity或Fragment中使用协程时，要尽量避免使用GlobalScope。GlobalScope是生命周期是process级别的，所以上面的例子中，即使Activity或Fragment已经被销毁，协程仍然在执行。
+
 
 	class MainViewModel : ViewModel() {
 	    // Make a network request without blocking the UI thread
