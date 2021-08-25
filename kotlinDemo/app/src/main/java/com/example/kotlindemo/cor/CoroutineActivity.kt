@@ -1,24 +1,23 @@
-package com.example.kotlindemo
+package com.example.kotlindemo.cor
 
 import androidx.appcompat.app.AppCompatActivity
 import android.os.Bundle
 import android.util.Log
-import android.view.View
 import android.widget.Button
+import com.example.kotlindemo.R
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.flow
-import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.zip
 import java.lang.Runnable
 import java.lang.Thread.sleep
 
 
-class CoruntineActivity : AppCompatActivity() {
+class CoroutineActivity : AppCompatActivity() {
     private val mainScope = MainScope()
 
     companion object {
-        val TAG = "CoruntineActivity"
+        val TAG = "CoroutineActivity"
     }
 
     private lateinit var mScope: CoroutineScope
@@ -38,12 +37,27 @@ class CoruntineActivity : AppCompatActivity() {
         "$p1 $p2".also { println("task3 finished: $it") }
     }
 
+    val ThreadPool =
+        newFixedThreadPoolContext(Runtime.getRuntime().availableProcessors() * 2, "ThreadPoolTest")
+
+    private fun taskLaunch(delayTime: Long = 0, job: suspend () -> Unit) =
+        mainScope.launch(ThreadPool) {
+            delay(delayTime)
+            job()
+        }
+
+    private fun <T> taskAsync(delayTime: Long = 0, job: suspend () -> T) =
+        mainScope.async(ThreadPool) {
+            delay(delayTime)
+            job()
+        }
+
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_coruntine)
 
-
-        mScope = CoroutineScope(Dispatchers.Default)
+        mScope = CoroutineScope(ThreadPool)
         mScope.launch(CoroutineName("initCoroutine")) {
             start()
         }

@@ -9,7 +9,7 @@
  * * <author>   <date>     <version>     <desc>
  * * linchaoyue 2020/12/22    1.0         create
  ******************************************************************/
-package com.example.kotlindemo
+package com.example.kotlindemo.cor
 
 import android.util.Log
 import kotlinx.coroutines.*
