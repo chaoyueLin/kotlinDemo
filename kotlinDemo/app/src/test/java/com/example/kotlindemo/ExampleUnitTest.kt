@@ -1,5 +1,6 @@
 package com.example.kotlindemo
 
+import com.example.kotlindemo.cor.CorContextDemo
 import org.junit.Test
 
 import org.junit.Assert.*
@@ -12,6 +13,7 @@ import org.junit.Assert.*
 class ExampleUnitTest {
     @Test
     fun addition_isCorrect() {
-        assertEquals(4, 2 + 2)
+        val demo: CorContextDemo = CorContextDemo()
+        demo.exceptionWithJob()
     }
 }

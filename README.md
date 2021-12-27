@@ -735,48 +735,198 @@ coroutineScope()方法也可以创建scope. 当我们需要以结构化的方式
 
 通过这种结构化的并发模式: 我们可以在创建top级别的协程时, 指定主要的context一次, 所有嵌套的协程会自动继承这个context, 只在有需要的时候进行修改即可.
 
- async 被定义为了 CoroutineScope 上的扩展，我们需要将它写在作用域内，并且这是 coroutineScope 函数所提供的：
-
-	suspend fun concurrentSum(): Int = coroutineScope {
-	    val one = async { doSomethingUsefulOne() }
-	    val two = async { doSomethingUsefulTwo() }
-	    one.await() + two.await()
-	}
-
-这种情况下，如果在 concurrentSum 函数内部发生了错误，并且它抛出了一个异常， 所有在作用域中启动的协程都会被取消。
 
 ![](./CoroutineScope2.gif)
 
+
+   fun exceptionWithJob() {
+        val exceptionHandler = CoroutineExceptionHandler { _, exception ->
+            println("CoroutineExceptionHandler got $exception")
+        }
+        val mainScope = CoroutineScope(Dispatchers.Default + Job() + exceptionHandler)
+        mainScope.launch {
+            println("job1 start")
+            delay(2000)
+            println("job1 end")
+        }
+
+        mainScope.launch {
+            println("job2 start")
+            delay(1000)
+            1 / 0
+            println("job2 end")
+        }
+
+
+        mainScope.launch {
+            println("job3 start")
+            delay(2000)
+            println("job3 end")
+        }
+    }
+
+输出：
+
+	System.out: job1 start
+	System.out: job2 start
+	System.out: job3 start
+	System.out: CoroutineExceptionHandler got java.lang.ArithmeticException: divide by zero
+
+异常处理是向上传播的
+
+	fun exceptionParentWithJob() {
+        val exceptionHandler = CoroutineExceptionHandler { _, exception ->
+            println("CoroutineExceptionHandler got $exception")
+        }
+        val childExceptionHandler = CoroutineExceptionHandler { _, exception ->
+            println("chlid CoroutineExceptionHandler got $exception")
+        }
+        val mainScope = CoroutineScope(Dispatchers.Default + Job() + exceptionHandler)
+        mainScope.launch {
+            println("job4 start")
+            delay(2000)
+            println("job4 end")
+        }
+
+        mainScope.launch {
+            launch(Job(coroutineContext[Job]) + childExceptionHandler) {
+                println("job5 start")
+                delay(1000)
+                1 / 0
+                println("job5 end")
+            }
+        }
+
+
+        mainScope.launch {
+            println("job6 start")
+            delay(2000)
+            println("job6 end")
+        }
+    }
+
+输出：
+
+	System.out: job4 start
+	System.out: job6 start
+	System.out: job5 start
+	System.out: CoroutineExceptionHandler got java.lang.ArithmeticException: divide by zero
 #### SupervisorJob
 内部的取消操作是单向传播，子协程错误不会传播给父协程和它的兄弟协程。这个特性只作用直接子线程，其子线程遵守默认规则
 ![](./SupervisorJob.png)
-### CoroutineExceptionHandler
 
-	fun main() = runBlocking {
-	        val job = GlobalScope.launch { // launch 根协程
-	            println("Throwing exception from launch")
-	            throw IndexOutOfBoundsException() // 我们将在控制台打印 Thread.defaultUncaughtExceptionHandler
+
+    fun exceptionWithSupervisorJob() {
+        val exceptionHandler = CoroutineExceptionHandler { _, exception ->
+            println("CoroutineExceptionHandler got $exception")
+        }
+        val mainScope = CoroutineScope(Dispatchers.Default + SupervisorJob() + exceptionHandler)
+        mainScope.launch {
+            println("job1 start")
+            delay(2000)
+            println("job1 end")
+        }
+
+        mainScope.launch {
+            println("job2 start")
+            delay(1000)
+            1 / 0
+            println("job2 end")
+        }
+
+
+        mainScope.launch {
+            println("job3 start")
+            delay(2000)
+            println("job3 end")
+        }
+    }
+
+输出：
+
+	System.out: job1 start
+	System.out: job2 start
+	System.out: job3 start
+	System.out: CoroutineExceptionHandler got java.lang.ArithmeticException: divide by zero
+	System.out: job1 end
+	System.out: job3 end
+
+#### 如果异常是CancellationException，即使是Job，也不会取消其他线程
+
+	fun cancelExceptionWithJob() {
+	        val exceptionHandler = CoroutineExceptionHandler { _, exception ->
+	            println("CoroutineExceptionHandler got $exception")
 	        }
-	        job.join()
-	        println("Joined failed job")
-	        val deferred = GlobalScope.async { // async 根协程
-	            println("Throwing exception from async")
-	            throw ArithmeticException() // 没有打印任何东西，依赖用户去调用等待
+	        val mainScope = CoroutineScope(Dispatchers.Default + Job() + exceptionHandler)
+	        mainScope.launch {
+	            println("job1 start")
+	            delay(2000)
+	            println("job1 end")
 	        }
-	        try {
-	            deferred.await()
-	            println("Unreached")
-	        } catch (e: ArithmeticException) {
-	            println("Caught ArithmeticException")
+	
+	        mainScope.launch {
+	            println("job2 start")
+	            delay(1000)
+	            throw CancellationException()
+	            println("job2 end")
+	        }
+	
+	
+	        mainScope.launch {
+	            println("job3 start")
+	            delay(2000)
+	            println("job3 end")
 	        }
 	    }
 
+输出
 
-* 抛出 CancellationException 或者调用cancel()只会取消当前协程和子协程，不会取消父协程，也不会其他例如打印堆栈信息等的异常处理操作。
-* 抛出未捕获的非 CancellationException 异常会取消子协程和自己，也会取消父协程，一直取消 root 协程，异常也会由 root 协程处理。
-* 如果使用了 SupervisorJob 或 supervisorScope，子协程抛出未捕获的非 CancellationException 异常不会取消父协程，异常也会由子协程自己处理。
-* launch式协程和actor式协程默认处理异常的方式只是打印堆栈信息，可以自定义 CoroutineExceptionHandler 来处理异常。
-* async式协程本身不会处理异常，自定义 CoroutineExceptionHandler 也无效，但是会在await()恢复调用者协程时重新抛出异常。
+	System.out: job1 start
+	System.out: job2 start
+	System.out: job3 start
+	System.out: job3 end
+	System.out: job1 end
+
+如果有子异常处理
+
+    fun exceptionChildWithJob() {
+        val exceptionHandler = CoroutineExceptionHandler { _, exception ->
+            println("CoroutineExceptionHandler got $exception")
+        }
+        val childExceptionHandler = CoroutineExceptionHandler { _, exception ->
+            println("chlid CoroutineExceptionHandler got $exception")
+        }
+        val mainScope = CoroutineScope(Dispatchers.Default + Job() + exceptionHandler)
+        mainScope.launch {
+            println("job4 start")
+            delay(2000)
+            println("job4 end")
+        }
+
+        mainScope.launch {
+            launch(SupervisorJob(coroutineContext[Job]) + childExceptionHandler) {
+                println("job5 start")
+                delay(1000)
+                1 / 0
+                println("job5 end")
+            }
+        }
+
+
+        mainScope.launch {
+            println("job6 start")
+            delay(2000)
+            println("job6 end")
+        }
+    }
+
+输出：
+System.out: job4 start
+System.out: job6 start
+System.out: job5 start
+System.out: chlid CoroutineExceptionHandler got java.lang.ArithmeticException: divide by zero
+System.out: job4 end
+System.out: job6 end
 
 ## 协程在Android中应用
 

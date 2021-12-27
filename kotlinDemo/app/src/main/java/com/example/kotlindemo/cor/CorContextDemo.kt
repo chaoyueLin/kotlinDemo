@@ -13,6 +13,8 @@ package com.example.kotlindemo.cor
 
 import android.util.Log
 import kotlinx.coroutines.*
+import kotlin.coroutines.CoroutineContext
+import kotlin.coroutines.coroutineContext
 
 /*****************************************************************
  * * File: - CorContextDemo
@@ -25,7 +27,7 @@ import kotlinx.coroutines.*
  * * <author>   <date>     <version>     <desc>
  * * linchaoyue 2020/12/22    1.0         create
  ******************************************************************/
-class CorContextDemo {
+public class CorContextDemo {
     companion object {
         const val TAG = "CorContextDemo"
     }
@@ -37,6 +39,7 @@ class CorContextDemo {
         Log.d(TAG, "$context")
 
     }
+
     fun main() = runBlocking {
         val job = GlobalScope.launch { // launch 根协程
             println("Throwing exception from launch")
@@ -53,6 +56,146 @@ class CorContextDemo {
             println("Unreached")
         } catch (e: ArithmeticException) {
             println("Caught ArithmeticException")
+        }
+    }
+
+    fun exceptionWithJob() {
+        val exceptionHandler = CoroutineExceptionHandler { _, exception ->
+            println("CoroutineExceptionHandler got $exception")
+        }
+        val mainScope = CoroutineScope(Dispatchers.Default + Job() + exceptionHandler)
+        mainScope.launch {
+            println("job1 start")
+            delay(2000)
+            println("job1 end")
+        }
+
+        mainScope.launch {
+            println("job2 start")
+            delay(1000)
+            1 / 0
+            println("job2 end")
+        }
+
+
+        mainScope.launch {
+            println("job3 start")
+            delay(2000)
+            println("job3 end")
+        }
+    }
+
+    fun exceptionWithSupervisorJob() {
+        val exceptionHandler = CoroutineExceptionHandler { _, exception ->
+            println("CoroutineExceptionHandler got $exception")
+        }
+        val mainScope = CoroutineScope(Dispatchers.Default + SupervisorJob() + exceptionHandler)
+        mainScope.launch {
+            println("job1 start")
+            delay(2000)
+            println("job1 end")
+        }
+
+        mainScope.launch {
+            println("job2 start")
+            delay(1000)
+            1 / 0
+            println("job2 end")
+        }
+
+
+        mainScope.launch {
+            println("job3 start")
+            delay(2000)
+            println("job3 end")
+        }
+    }
+
+    fun cancelExceptionWithJob() {
+        val exceptionHandler = CoroutineExceptionHandler { _, exception ->
+            println("CoroutineExceptionHandler got $exception")
+        }
+        val mainScope = CoroutineScope(Dispatchers.Default + Job() + exceptionHandler)
+        mainScope.launch {
+            println("job1 start")
+            delay(2000)
+            println("job1 end")
+        }
+
+        mainScope.launch {
+            println("job2 start")
+            delay(1000)
+            throw CancellationException()
+            println("job2 end")
+        }
+
+
+        mainScope.launch {
+            println("job3 start")
+            delay(2000)
+            println("job3 end")
+        }
+    }
+
+    fun exceptionParentWithJob() {
+        val exceptionHandler = CoroutineExceptionHandler { _, exception ->
+            println("CoroutineExceptionHandler got $exception")
+        }
+        val childExceptionHandler = CoroutineExceptionHandler { _, exception ->
+            println("chlid CoroutineExceptionHandler got $exception")
+        }
+        val mainScope = CoroutineScope(Dispatchers.Default + Job() + exceptionHandler)
+        mainScope.launch {
+            println("job4 start")
+            delay(2000)
+            println("job4 end")
+        }
+
+        mainScope.launch {
+            launch(Job(coroutineContext[Job]) + childExceptionHandler) {
+                println("job5 start")
+                delay(1000)
+                1 / 0
+                println("job5 end")
+            }
+        }
+
+
+        mainScope.launch {
+            println("job6 start")
+            delay(2000)
+            println("job6 end")
+        }
+    }
+
+    fun exceptionChildWithJob() {
+        val exceptionHandler = CoroutineExceptionHandler { _, exception ->
+            println("CoroutineExceptionHandler got $exception")
+        }
+        val childExceptionHandler = CoroutineExceptionHandler { _, exception ->
+            println("chlid CoroutineExceptionHandler got $exception")
+        }
+        val mainScope = CoroutineScope(Dispatchers.Default + Job() + exceptionHandler)
+        mainScope.launch {
+            println("job4 start")
+            delay(2000)
+            println("job4 end")
+        }
+
+        mainScope.launch {
+            launch(SupervisorJob(coroutineContext[Job]) + childExceptionHandler) {
+                println("job5 start")
+                delay(1000)
+                1 / 0
+                println("job5 end")
+            }
+        }
+
+
+        mainScope.launch {
+            println("job6 start")
+            delay(2000)
+            println("job6 end")
         }
     }
 

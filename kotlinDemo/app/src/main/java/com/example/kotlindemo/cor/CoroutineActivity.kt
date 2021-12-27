@@ -90,7 +90,11 @@ class CoroutineActivity : AppCompatActivity() {
 //        CorContextDemo().test()
 //        CorContextDemo().main()
 
-
+//        CorContextDemo().exceptionWithJob()
+//        CorContextDemo().exceptionWithSupervisorJob()
+//        CorContextDemo().cancelExceptionWithJob()
+//        CorContextDemo().exceptionParentWithJob()
+        CorContextDemo().exceptionChildWithJob()
     }
 
     private suspend fun start(): Int {
