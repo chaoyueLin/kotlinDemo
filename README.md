@@ -739,31 +739,31 @@ coroutineScope()方法也可以创建scope. 当我们需要以结构化的方式
 ![](./CoroutineScope2.gif)
 
 
-   fun exceptionWithJob() {
-        val exceptionHandler = CoroutineExceptionHandler { _, exception ->
-            println("CoroutineExceptionHandler got $exception")
-        }
-        val mainScope = CoroutineScope(Dispatchers.Default + Job() + exceptionHandler)
-        mainScope.launch {
-            println("job1 start")
-            delay(2000)
-            println("job1 end")
-        }
-
-        mainScope.launch {
-            println("job2 start")
-            delay(1000)
-            1 / 0
-            println("job2 end")
-        }
-
-
-        mainScope.launch {
-            println("job3 start")
-            delay(2000)
-            println("job3 end")
-        }
-    }
+	   fun exceptionWithJob() {
+	        val exceptionHandler = CoroutineExceptionHandler { _, exception ->
+	            println("CoroutineExceptionHandler got $exception")
+	        }
+	        val mainScope = CoroutineScope(Dispatchers.Default + Job() + exceptionHandler)
+	        mainScope.launch {
+	            println("job1 start")
+	            delay(2000)
+	            println("job1 end")
+	        }
+	
+	        mainScope.launch {
+	            println("job2 start")
+	            delay(1000)
+	            1 / 0
+	            println("job2 end")
+	        }
+	
+	
+	        mainScope.launch {
+	            println("job3 start")
+	            delay(2000)
+	            println("job3 end")
+	        }
+	    }
 
 输出：
 
@@ -1113,7 +1113,9 @@ Retrofit从2.6.0开始提供了对协程的支持.
 	fun m2(str: String?) {
 	    str?.length
 	}
+
 字节码，m2的入参被加上了可为null的注解，kotlin编译器对该场景做了如下处理：如果为null则什么都不做，否则直接调用str的length方法
+
 	// 
 	  public final static m2(Ljava/lang/String;)V
 	    @Lorg/jetbrains/annotations/Nullable;() // invisible, parameter 0
