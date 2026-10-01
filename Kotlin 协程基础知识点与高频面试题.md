@@ -433,6 +433,98 @@ fun main() = runBlocking {
 
 ![](./CoroutineScope2.gif)
 
+作用域构建器
+
+`coroutineScope` 和 `supervisorScope` 都是挂起函数，用来在 suspend 函数内部创建一个新的子作用域，并等待里面所有子协程结束。两者的差别只在异常处理上：
+
+* coroutineScope：一个协程失败了，所有的其他兄弟协程也会被取消，异常还会抛给调用者。
+* supervisorScope：一个协程失败了，不会影响其他兄弟协程，异常交给 CoroutineExceptionHandler 处理。
+
+```kotlin
+fun coroutineScopeBuilder() {
+    runBlocking {
+        try {
+            coroutineScope {
+                launch {
+                    println("job1 start")
+                    delay(2000)
+                    println("job1 end")
+                }
+                launch {
+                    println("job2 start")
+                    delay(1000)
+                    1 / 0
+                    println("job2 end")
+                }
+                launch {
+                    println("job3 start")
+                    delay(2000)
+                    println("job3 end")
+                }
+            }
+        } catch (e: ArithmeticException) {
+            println("coroutineScope threw $e")
+        }
+    }
+}
+```
+
+输出：
+
+```
+System.out: job1 start
+System.out: job2 start
+System.out: job3 start
+System.out: coroutineScope threw java.lang.ArithmeticException: divide by zero
+```
+
+job2 崩溃后兄弟协程 job1、job3 一并被取消，都不会打印 end，异常穿透 coroutineScope 抛给调用者。
+
+```kotlin
+fun supervisorScopeBuilder() {
+    val exceptionHandler = CoroutineExceptionHandler { _, exception ->
+        println("CoroutineExceptionHandler got $exception")
+    }
+    runBlocking(exceptionHandler) {
+        supervisorScope {
+            launch {
+                println("job1 start")
+                delay(2000)
+                println("job1 end")
+            }
+            launch {
+                println("job2 start")
+                delay(1000)
+                1 / 0
+                println("job2 end")
+            }
+            launch {
+                println("job3 start")
+                delay(2000)
+                println("job3 end")
+            }
+        }
+        println("supervisorScope finished")
+    }
+}
+```
+
+输出：
+
+```
+System.out: job1 start
+System.out: job2 start
+System.out: job3 start
+System.out: CoroutineExceptionHandler got java.lang.ArithmeticException: divide by zero
+System.out: job1 end
+System.out: job3 end
+System.out: supervisorScope finished
+```
+
+supervisorScope 内部是一个 SupervisorJob，job2 的异常不向上传播（job2 自己不会打印 end），job1、job3 正常执行完毕。
+
+> 注意：supervisorScope 和 SupervisorJob 一样只对直接子协程生效；另外它只是切断了向上传播的链路，异常仍然需要一个出口——通常把 CoroutineExceptionHandler 装在创建作用域的 context 上（子协程会自动继承），否则会走默认的线程异常处理器打印堆栈。
+
 ## 六、异常处理与取消
 
 ### 6.1 异常向上传播
@@ -651,6 +743,171 @@ System.out: job6 end
 ```
 
 用 SupervisorJob 切断了异常向上传播的链路，子作用域自己持有了异常，此时子协程上安装的 CoroutineExceptionHandler 才会生效。
+
+### 6.5 Job.cancel()
+
+取消是协作式的：`job.cancel()` 只是把 Job 置为 Cancelling 状态，并不会强杀正在执行的代码，协程需要在挂起点主动检查取消状态才会真正结束。所以取消之后通常要 `join()` 等待协程收尾，或者直接用 `cancelAndJoin()`。
+
+```kotlin
+fun cancelJob() {
+    runBlocking {
+        val job = launch {
+            try {
+                repeat(5) { i ->
+                    println("job: I'm sleeping $i ...")
+                    delay(500)
+                }
+            } finally {
+                // 被取消时 finally 同样会执行，用来释放资源
+                println("job: I'm running finally")
+            }
+        }
+        delay(1300)
+        println("main: I'm tired of waiting!")
+        job.cancelAndJoin() // 等价于 job.cancel() + job.join()
+        println("main: Now I can quit. isCancelled=${job.isCancelled}")
+    }
+}
+```
+
+输出：
+
+```
+System.out: job: I'm sleeping 0 ...
+System.out: job: I'm sleeping 1 ...
+System.out: job: I'm sleeping 2 ...
+System.out: main: I'm tired of waiting!
+System.out: job: I'm running finally
+System.out: main: Now I can quit. isCancelled=true
+```
+
+delay 是可取消的挂起函数，取消在挂起点生效，所以第 4 次循环不会再打印，finally 里的清理逻辑正常执行。
+
+如果协程体里没有挂起点（死循环、`Thread.sleep` 之类的阻塞调用），cancel 就不会生效：
+
+```kotlin
+fun cancelWithoutSuspensionPoint() {
+    runBlocking {
+        val job = launch(Dispatchers.Default) {
+            var i = 0
+            while (i < 5) {
+                Thread.sleep(500) // 阻塞而不是挂起，取消打不断它
+                println("job: I'm sleeping $i ...")
+                i++
+            }
+        }
+        delay(1300)
+        println("main: I'm tired of waiting!")
+        job.cancelAndJoin()
+        println("main: Now I can quit.")
+    }
+}
+```
+
+输出：
+
+```
+System.out: job: I'm sleeping 0 ...
+System.out: job: I'm sleeping 1 ...
+System.out: job: I'm sleeping 2 ...
+System.out: main: I'm tired of waiting!
+System.out: job: I'm sleeping 3 ...
+System.out: job: I'm sleeping 4 ...
+System.out: main: Now I can quit.
+```
+
+取消之后循环依然跑完了。修复方式是把循环条件换成 `while (isActive)`，或者在循环体里调用 `ensureActive()`（立即抛 CancellationException）、`yield()`（制造一个挂起点并检查取消）。
+
+另外取消会沿着父子关系向下传播：父 Job 被取消时，它所有的子协程都会被取消。
+
+### 6.6 取消后仍需执行的挂起代码：NonCancellable
+
+协程进入取消状态后，finally 里再调用挂起函数会立刻抛出 CancellationException，清理工作做到一半就断了。这时用 `withContext(NonCancellable)` 包住，这段代码就"取消不掉"了：
+
+```kotlin
+fun nonCancellableDemo() {
+    runBlocking {
+        val job = launch {
+            try {
+                repeat(5) { i ->
+                    println("job: I'm sleeping $i ...")
+                    delay(500)
+                }
+            } finally {
+                withContext(NonCancellable) {
+                    // 切到 NonCancellable 后 isActive 又变回 true，可以正常挂起
+                    println("job: releasing resources, isActive=$isActive")
+                    delay(1000) // 模拟关闭连接、提交事务、上报日志等耗时操作
+                    println("job: resources released")
+                }
+            }
+        }
+        delay(1300)
+        println("main: I'm tired of waiting!")
+        job.cancelAndJoin()
+        println("main: Now I can quit.")
+    }
+}
+```
+
+输出：
+
+```
+System.out: job: I'm sleeping 0 ...
+System.out: job: I'm sleeping 1 ...
+System.out: job: I'm sleeping 2 ...
+System.out: main: I'm tired of waiting!
+System.out: job: releasing resources, isActive=true
+System.out: job: resources released
+System.out: main: Now I can quit.
+```
+
+NonCancellable 是一个单例 Job，永远处于 Active 状态且无法被取消，只能作为 `withContext` 的参数使用。切换过去之后协程就取消不掉了，所以里面的代码要尽量短、可控，用完立刻切回来。
+
+### 6.7 超时：withTimeout 与 withTimeoutOrNull
+
+两者用来给一段挂起代码加上超时限制，超时会取消这段代码所在的协程：
+
+```kotlin
+fun timeoutDemo() {
+    runBlocking {
+        // 1. 超时抛 TimeoutCancellationException
+        try {
+            withTimeout(1000) {
+                repeat(5) { i ->
+                    println("job: I'm sleeping $i ...")
+                    delay(500)
+                }
+            }
+        } catch (e: TimeoutCancellationException) {
+            println("caught $e")
+        }
+
+        // 2. 不希望抛异常，超时只返回 null
+        val result = withTimeoutOrNull(1000) {
+            delay(2000)
+            "done"
+        }
+        println("result = $result")
+    }
+}
+```
+
+输出：
+
+```
+System.out: job: I'm sleeping 0 ...
+System.out: job: I'm sleeping 1 ...
+System.out: caught kotlinx.coroutines.TimeoutCancellationException: Timed out waiting for 1000 ms
+System.out: result = null
+```
+
+几个要点：
+
+* TimeoutCancellationException 是 CancellationException 的子类，所以超时只会取消当前协程，不会连累父协程和兄弟协程（对照 6.3）。
+* withTimeoutOrNull 内部就是捕获了超时异常并返回 null，适合"超时就走降级逻辑"的场景；withTimeout 则适合必须让调用方感知到超时的场景。
+* 超时对 block 内部启动的所有子协程同样生效，因为 withTimeout 内部创建的正是一个作用域。
+* 常见的坑：如果 block 内部把 CancellationException 吞掉了（catch 之后不重新抛出），超时就不会生效。
 
 ## 七、协程在 Android 中的应用
 
