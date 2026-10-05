@@ -13,6 +13,114 @@ Flow是基于协程实现的异步数据流框架，可依次发射多个值，�
     冷流：flow构建的常规Flow，订阅时才运行，多订阅会多次执行上游逻辑，无内存常驻数据；
     热流：StateFlow、SharedFlow，创建后常驻内存发射数据，订阅与否都会运行，多订阅共享同一份数据源。
 
+### 1.1 冷流：不收集不执行，重复收集重复执行
+
+```kotlin
+import kotlinx.coroutines.*
+import kotlinx.coroutines.flow.*
+
+fun main() = runBlocking {
+    val cold = flow {
+        println("生产者执行")
+        emit(1)
+        emit(2)
+    }
+    println("创建 flow 对象，此时生产者还没有运行")
+    cold.collect { println("第一次收集 $it") }
+    cold.collect { println("第二次收集 $it") }     // 第二次收集会重新执行一遍上游
+}
+```
+
+输出：
+
+```
+创建 flow 对象，此时生产者还没有运行
+生产者执行
+第一次收集 1
+第一次收集 2
+生产者执行
+第二次收集 1
+第二次收集 2
+```
+
+### 1.2 三类流的使用方式
+
+```kotlin
+import kotlinx.coroutines.*
+import kotlinx.coroutines.flow.*
+
+fun main() = runBlocking {
+    // 普通 Flow：冷流，collect 时执行，收完自动结束
+    flowOf(1, 2, 3).collect { println("普通 Flow 收到 $it") }
+
+    // StateFlow：热流，必须给初始值，始终缓存最新值；收集永不结束，take(1) 收一次即停
+    val state = MutableStateFlow("加载中")
+    state.value = "加载成功"
+    println("StateFlow 不订阅也能读：${state.value}")
+    state.take(1).collect { println("新订阅者立刻拿到缓存值 $it") }
+
+    // SharedFlow：热流，支持多订阅；replay = 1 表示给新订阅者重放最近 1 条
+    val shared = MutableSharedFlow<String>(replay = 1)
+    shared.emit("最新通知")
+    shared.take(1).collect { println("SharedFlow 新订阅者收到重放值 $it") }
+}
+```
+
+输出：
+
+```
+普通 Flow 收到 1
+普通 Flow 收到 2
+普通 Flow 收到 3
+StateFlow 不订阅也能读：加载成功
+新订阅者立刻拿到缓存值 加载成功
+SharedFlow 新订阅者收到重放值 最新通知
+```
+
+### 1.3 冷流与热流的多订阅对比
+
+```kotlin
+import kotlinx.coroutines.*
+import kotlinx.coroutines.flow.*
+
+fun main() = runBlocking {
+    // 冷流：两个订阅者各自触发一次完整执行，生产逻辑跑了两遍
+    val cold = flow {
+        println("冷流上游执行")
+        emit("数据")
+    }
+    launch { cold.collect { println("订阅者 A 收到 $it") } }
+    launch { cold.collect { println("订阅者 B 收到 $it") } }
+    delay(50)
+    println("---")
+
+    // 热流：只有一份数据源，多个订阅者共享，同一值各收到一份
+    val hot = MutableStateFlow("当前状态")
+    launch { hot.collect { println("订阅者 C 收到 $it") } }
+    launch { hot.collect { println("订阅者 D 收到 $it") } }
+    delay(50)
+    hot.value = "状态更新"
+    delay(50)                                    // 等订阅者收到更新
+    println("C、D 收到的是同一条更新")
+    coroutineContext.cancelChildren()            // 热流收集永不结束，退出前取消子协程
+}
+```
+
+输出：
+
+```
+冷流上游执行
+订阅者 A 收到 数据
+冷流上游执行
+订阅者 B 收到 数据
+---
+订阅者 C 收到 当前状态
+订阅者 D 收到 当前状态
+订阅者 C 收到 状态更新
+订阅者 D 收到 状态更新
+C、D 收到的是同一条更新
+```
+
 ## 二、常用运算符
 1. 转换类
 map：逐个转换发射的数据；
@@ -31,6 +139,196 @@ launchWhenStarted：仅暂停协程，上游持续运行，存在资源损耗。
 collect：完整接收每一条数据；
 collectLatest：丢弃未执行完的旧任务，只执行最新数据逻辑。
 
+### 2.1 map 与 transform
+
+```kotlin
+import kotlinx.coroutines.*
+import kotlinx.coroutines.flow.*
+
+fun main() = runBlocking {
+    flowOf(1, 2, 3)
+        .map { it * it }                          // 一对一转换
+        .collect { println("map 结果 $it") }
+
+    flowOf("A", "B")
+        .transform { value ->                     // 一对多，想发几条发几条
+            emit("$value-开始")
+            emit("$value-结束")
+        }
+        .collect { println("transform 结果 $it") }
+}
+```
+
+输出：
+
+```
+map 结果 1
+map 结果 4
+map 结果 9
+transform 结果 A-开始
+transform 结果 A-结束
+transform 结果 B-开始
+transform 结果 B-结束
+```
+
+### 2.2 flatMapConcat / flatMapMerge / flatMapLatest
+
+```kotlin
+import kotlinx.coroutines.*
+import kotlinx.coroutines.flow.*
+
+@OptIn(ExperimentalCoroutinesApi::class)
+fun main() = runBlocking {
+    fun task(value: Int) = flow {
+        println("开始处理 $value")
+        delay(100)
+        emit("处理完 $value")
+    }
+
+    println("flatMapConcat：串行排队，下一个要等上一个跑完（总耗时约 300ms）")
+    flowOf(1, 2, 3).flatMapConcat { task(it) }.collect { println(it) }
+
+    println("flatMapMerge：并发执行，三个同时跑（总耗时约 100ms）")
+    flowOf(1, 2, 3).flatMapMerge { task(it) }.collect { println(it) }
+}
+```
+
+输出：
+
+```
+flatMapConcat：串行排队，下一个要等上一个跑完（总耗时约 300ms）
+开始处理 1
+处理完 1
+开始处理 2
+处理完 2
+开始处理 3
+处理完 3
+flatMapMerge：并发执行，三个同时跑（总耗时约 100ms）
+开始处理 1
+开始处理 2
+开始处理 3
+处理完 1
+处理完 2
+处理完 3
+```
+
+flatMapLatest：新数据一来就取消上一条正在跑的流，只保留最新的一个，搜索防抖就是靠它：
+
+```kotlin
+import kotlinx.coroutines.*
+import kotlinx.coroutines.flow.*
+
+@OptIn(ExperimentalCoroutinesApi::class)
+fun main() = runBlocking {
+    flow {
+        emit("k"); delay(50)                      // 模拟用户快速输入
+        emit("ko"); delay(50)
+        emit("kot"); delay(50)
+        emit("kotlin")
+    }.flatMapLatest { keyword ->
+        flow {
+            println("发起 [$keyword] 的请求")
+            delay(80)                             // 模拟 80ms 的网络请求
+            emit("关键词 [$keyword] 的搜索结果")
+        }
+    }.collect { println(it) }
+}
+```
+
+输出：
+
+```
+发起 [k] 的请求
+发起 [ko] 的请求
+发起 [kot] 的请求
+发起 [kotlin] 的请求
+关键词 [kotlin] 的搜索结果
+```
+
+前三个请求都在返回前被新关键词取消，只有最后一个能返回并渲染，所以不用再手写防抖延时。
+
+### 2.3 filter / distinctUntilChanged / take
+
+```kotlin
+import kotlinx.coroutines.*
+import kotlinx.coroutines.flow.*
+
+fun main() = runBlocking {
+    flowOf(1, 2, 3, 4, 5, 6)
+        .filter { it % 2 == 0 }
+        .collect { print("$it ") }
+    println()                                     // 2 4 6
+
+    flowOf(1, 1, 2, 2, 2, 3, 1)
+        .distinctUntilChanged()                   // 只去连续重复，不保证全局唯一
+        .collect { print("$it ") }
+    println()                                     // 1 2 3 1
+
+    flowOf(1, 2, 3, 4, 5)
+        .take(2)                                  // 取够 n 条后自动取消上游
+        .collect { print("$it ") }
+    println()                                     // 1 2
+}
+```
+
+输出：
+
+```
+2 4 6
+1 2 3 1
+1 2
+```
+
+### 2.4 生命周期感知收集（Android 代码，不能脱离 Android 运行）
+
+```kotlin
+// 依赖 androidx.lifecycle:lifecycle-runtime-ktx
+lifecycleScope.launch {
+    repeatOnLifecycle(Lifecycle.State.STARTED) {
+        viewModel.uiState.collect { state -> render(state) }   // 低于 STARTED 直接取消收集，回到 STARTED 重新收集
+    }
+}
+```
+
+launchWhenStarted 只是把协程挂起，上游照跑不误，资源照样消耗，已经废弃，不要再用。
+
+### 2.5 collect 与 collectLatest
+
+```kotlin
+import kotlinx.coroutines.*
+import kotlinx.coroutines.flow.*
+
+fun main() = runBlocking {
+    fun source() = flow {
+        emit(1); delay(30)
+        emit(2); delay(30)
+        emit(3)
+    }
+
+    source().collect { value ->
+        delay(50)                                 // 每条都要处理 50ms，比发射间隔长
+        println("collect 处理完 $value")
+    }
+    println("---")
+    source().collectLatest { value ->
+        delay(50)                                 // 新数据一来，上一轮没跑完的处理被取消
+        println("collectLatest 处理完 $value")
+    }
+}
+```
+
+输出：
+
+```
+collect 处理完 1
+collect 处理完 2
+collect 处理完 3
+---
+collectLatest 处理完 3
+```
+
+collect 一条不落全处理完；collectLatest 前两轮都在 delay 中被新数据打断取消，只有最后一条跑完，避免旧请求返回覆盖新结果。
+
 ## 三、StateFlow与SharedFlow详细对比
 1. StateFlow
     - 强制初始值，内部永久缓存最新值；
@@ -44,6 +342,103 @@ collectLatest：丢弃未执行完的旧任务，只执行最新数据逻辑。
     - 适配一次性事件：弹窗、页面路由、吐司，规避重建重复消费问题。
 3. 一次性事件解决方案
 若强行用StateFlow传递事件，配置包装类Event<T>，通过isConsumed标记事件是否已消费；更简洁方案是使用SharedFlow，replay设为0避免重建重放。
+
+### 3.1 StateFlow：初始值、缓存值与自带去重
+
+```kotlin
+import kotlinx.coroutines.*
+import kotlinx.coroutines.flow.*
+
+fun main() = runBlocking {
+    val state = MutableStateFlow("加载中")          // 必须给初始值
+    val job = launch {
+        state.collect { println("订阅者收到 $it") }  // 先收到缓存值，之后持续接收更新
+    }
+    yield()                                        // 先让订阅者订阅上
+
+    state.value = "成功"
+    yield()
+    state.value = "成功"                            // 值相同，自带 distinctUntilChanged，不会重复下发
+    yield()
+
+    println("不订阅也能读：${state.value}")
+    job.cancel()                                   // 收集永不结束，要手动取消
+}
+```
+
+输出：
+
+```
+订阅者收到 加载中
+订阅者收到 成功
+不订阅也能读：成功
+```
+
+### 3.2 SharedFlow：多订阅、不重放历史事件
+
+```kotlin
+import kotlinx.coroutines.*
+import kotlinx.coroutines.channels.BufferOverflow
+import kotlinx.coroutines.flow.*
+
+fun main() = runBlocking {
+    // 一次性事件的推荐配置：不重放、1 条缓冲、缓冲满时丢最旧的
+    val events = MutableSharedFlow<String>(
+        replay = 0,                                // 新订阅者拿不到历史事件
+        extraBufferCapacity = 1,
+        onBufferOverflow = BufferOverflow.DROP_OLDEST
+    )
+    events.emit("订阅前的旧事件")                   // replay = 0，没有订阅者时直接丢弃
+
+    val a = launch { events.collect { println("订阅者 A 收到 $it") } }
+    yield()
+    events.emit("弹窗：网络异常")
+    yield()
+
+    val b = launch { events.collect { println("订阅者 B 收到 $it") } }
+    yield()
+    events.emit("跳转：详情页")                     // A、B 各收到一份
+    yield()
+
+    a.cancel(); b.cancel()
+}
+```
+
+输出：
+
+```
+订阅者 A 收到 弹窗：网络异常
+订阅者 A 收到 跳转：详情页
+订阅者 B 收到 跳转：详情页
+```
+
+和 StateFlow 不同，SharedFlow 不去重，连续发两次"跳转：详情页"，两个订阅者都会各收到两次；A 是在旧事件之后才订阅的，所以拿不到旧事件，正好满足"一次性事件不重放"的要求。
+
+### 3.3 一次性事件：Event 包装类
+
+```kotlin
+import kotlinx.coroutines.*
+import kotlinx.coroutines.flow.*
+
+data class Event<T>(private val content: T) {
+    var isConsumed = false
+        private set
+    fun consume(): T? = if (isConsumed) null else { isConsumed = true; content }
+}
+
+fun main() = runBlocking {
+    val event = Event("弹出登录过期提示")
+    println("第一次消费：${event.consume()}")       // 弹窗正常弹出
+    println("第二次消费：${event.consume()}")       // null，已消费，屏幕旋转重建也不会重复弹
+}
+```
+
+输出：
+
+```
+第一次消费：弹出登录过期提示
+第二次消费：null
+```
 
 ## 四、Channel
 
