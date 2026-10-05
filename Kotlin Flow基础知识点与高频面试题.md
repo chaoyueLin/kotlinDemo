@@ -1,4 +1,4 @@
-# Kotlin Flow基础知识点与高频面试题
+# Kotlin Channel,Flow基础知识点与高频面试题
 ## 一、Flow基础概念
 Flow是基于协程实现的异步数据流框架，可依次发射多个值，具备冷流特性：若无收集者，上游代码不会执行；每次触发收集都会完整执行一次生产者逻辑。
 1. 分类
@@ -45,7 +45,331 @@ collectLatest：丢弃未执行完的旧任务，只执行最新数据逻辑。
 3. 一次性事件解决方案
 若强行用StateFlow传递事件，配置包装类Event<T>，通过isConsumed标记事件是否已消费；更简洁方案是使用SharedFlow，replay设为0避免重建重放。
 
-## 四、高频面试问题及解答
+## 四、Channel
+
+Channel 是协程间的并发安全消息队列（协程版 BlockingQueue），遵循 CSP 模型：不靠共享内存来通信，而是靠通信来共享内存。与 Flow 的区别：Channel 是热流、点对点，一个元素只会被一个接收者消费，适合协程通信与任务分发；Flow 面向数据流变换，普通 Flow 是冷流且支持多订阅。
+
+### 4.1 容量与迭代
+
+Channel(capacity) 的容量决定 send 的行为：
+
+| capacity 常量 | 值 | 行为 |
+| --- | --- | --- |
+| RENDEZVOUS | 0（默认） | 无缓冲区，send 挂起直到有接收者取走 |
+| BUFFERED | -2 | 使用默认缓冲 64（可通过 `kotlinx.coroutines.channels.defaultBuffer` 属性调整），满则 send 挂起 |
+| CONFLATED | -1 | 缓冲区只保留最新值，旧值被覆盖，send 永不挂起 |
+| UNLIMITED | Int.MAX_VALUE | 无界队列，send 永不挂起，注意内存风险 |
+| 正整数 n | n | 缓冲 n 条，满则 send 挂起 |
+
+```kotlin
+import kotlinx.coroutines.*
+import kotlinx.coroutines.channels.*
+
+fun main() = runBlocking {
+    val channel = Channel<Int>()            // 默认 RENDEZVOUS，无缓冲区
+    launch {
+        repeat(3) { channel.send(it) }      // 没有接收者时挂起
+        channel.close()
+    }
+    for (value in channel) {                // 迭代直到 Channel 关闭，循环自然结束
+        println("收到 $value")
+    }
+}
+```
+
+输出：
+
+```
+收到 0
+收到 1
+收到 2
+```
+
+迭代：`for (x in channel)` 是最常用的消费方式，等价于循环 `receive()` 并在关闭时退出；`consumeEach {}` 也可以，区别是它会在消费结束后取消 Channel。
+
+### 4.2 produce 与 actor
+
+produce = launch + Channel + 自动关闭：启动生产者协程并返回 ReceiveChannel，block 执行完（或异常）自动 close；actor = launch + Channel：启动消费者协程并返回 SendChannel。二者都受结构化并发约束，父作用域取消则一起取消，未捕获异常按 launch 规则向上传播。
+
+```kotlin
+import kotlinx.coroutines.*
+import kotlinx.coroutines.channels.*
+
+@OptIn(ExperimentalCoroutinesApi::class, ObsoleteCoroutinesApi::class)
+fun main() = runBlocking {
+    val actor = actor<Int> {                     // 消费者协程，返回 SendChannel
+        for (value in channel) {                 // 消费到 Channel 关闭
+            println("处理 $value")
+        }
+    }
+    repeat(3) { actor.send(it) }
+    actor.close()
+
+    val producer = produce {                     // 生产者协程，返回 ReceiveChannel
+        repeat(3) { send(it * it) }
+    }                                            // 生产完自动 close
+    for (value in producer) {
+        println("消费 $value")
+    }
+}
+```
+
+输出：
+
+```
+处理 0
+处理 1
+处理 2
+消费 0
+消费 1
+消费 4
+```
+
+- produce/actor 的默认 capacity 均为 RENDEZVOUS，实际使用建议显式指定容量；
+- send/receive 是挂起函数，trySend/tryReceive 是即试的非挂起版本，返回 ChannelResult；
+- 注意 API 状态：produce 目前标注 @ExperimentalCoroutinesApi，actor 标注 @ObsoleteCoroutinesApi，使用时要加 @OptIn（新代码更推荐直接用 Channel() 加 launch）。
+
+### 4.3 Channel 的关闭
+
+- close()：关闭发送端且幂等，之后 isClosedForSend 为 true，再 send 抛 ClosedSendChannelException；
+- 缓冲区中尚未取走的数据仍会被消费完，取空后再 receive 抛 ClosedReceiveChannelException，`for` 循环正常结束；
+- close(cause)：带异常关闭，接收方会抛出该异常；用 receiveCatching() 拿 ChannelResult 判断（isSuccess/isClosed/exceptionOrNull），可优雅处理关闭而不抛异常；
+- cancel()：立即取消，缓冲区数据直接丢弃，接收方抛 CancellationException；
+- produce 中生产者抛异常，框架会用该异常关闭 Channel；
+- 用 isClosedForReceive/isClosedForSend 判断状态（这两个是 delicate API，需 @OptIn(DelicateCoroutinesApi::class)），invokeOnClose {} 监听关闭，produce 中可用 awaitClose {} 做关闭清理（callbackFlow 必须调用）。
+
+```kotlin
+import kotlinx.coroutines.*
+import kotlinx.coroutines.channels.*
+
+fun main() = runBlocking {
+    val channel = Channel<Int>(Channel.BUFFERED)
+    launch {
+        repeat(3) { channel.send(it) }
+        channel.close()                     // 关闭发送端
+    }
+    for (value in channel) {
+        println("取出 $value")              // 关闭前缓冲的数据仍能取完
+    }
+    println("for 循环正常结束，没有抛异常")
+    // 关闭后再 send 会抛 ClosedSendChannelException
+    // 取空后再 receive 会抛 ClosedReceiveChannelException
+}
+```
+
+输出：
+
+```
+取出 0
+取出 1
+取出 2
+for 循环正常结束，没有抛异常
+```
+
+### 4.4 BroadcastChannel
+
+广播通道：一个元素会分发给所有订阅者（各自收到一份），用于一对多事件分发，openSubscription() 获取订阅通道。该 API 自 1.7.0 起已废弃（WARNING 级别），官方推荐用 SharedFlow/StateFlow 替代，新代码不要使用：
+
+- 广播事件：MutableSharedFlow(replay = 0, extraBufferCapacity = 1)；
+- 需要向新订阅者重放最新状态：StateFlow。
+
+## 五、多路复用
+
+select 是协程的多路复用：同时等待多个挂起事件，谁先就绪就执行哪个分支，类比 Java NIO 的 Selector、Go 的 select。select 是挂起函数，由若干子句（SelectClause）组成，命中一个后其余注册自动撤销。
+
+1. 复用多个 await
+
+```kotlin
+import kotlinx.coroutines.*
+import kotlinx.coroutines.selects.*
+
+fun main() = runBlocking {
+    val a = async { delay(300); "A" }
+    val b = async { delay(100); "B" }
+    val result = select<String> {
+        a.onAwait { it }                         // A 要 300ms
+        b.onAwait { it }                         // B 只要 100ms
+    }
+    println("先返回的是 $result")
+}
+```
+
+输出：
+
+```
+先返回的是 B
+```
+
+- 谁先完成取谁，已完成的 Deferred 会立即命中；
+- 未命中的 Deferred 不会被取消，之后仍可正常 await（这里 a 仍会跑完，runBlocking 会等它）。
+
+2. 复用多个 Channel
+
+```kotlin
+import kotlinx.coroutines.*
+import kotlinx.coroutines.channels.*
+import kotlinx.coroutines.selects.*
+
+@OptIn(ExperimentalCoroutinesApi::class)
+fun main() = runBlocking {
+    val a = produce { delay(300); send("A 的数据") }
+    val b = produce { delay(100); send("B 的数据") }
+    val result = select<String> {
+        a.onReceive { it }                       // A 要 300ms
+        b.onReceive { it }                       // B 只要 100ms
+    }
+    println("先收到 $result")
+    a.cancel()                                   // 没被选中的生产者要取消，否则它的 send 会一直挂起
+
+    val slow = produce<String> { delay(500); send("慢") }
+    val timeout = select<String> {
+        slow.onReceive { it }
+        onTimeout(200) { "等待超时" }            // select 还能搭配超时分支
+    }
+    println(timeout)
+    slow.cancel()
+}
+```
+
+输出：
+
+```
+先收到 B 的数据
+等待超时
+```
+
+- onReceive 是 SelectClause1；Channel 已关闭时该子句会抛异常，改用 onReceiveCatching {}（拿到 ChannelResult）可把"关闭"也作为结果参与竞争；
+- 发送端同样能 select：channel.onSend(value) {} 是 SelectClause2，哪个 Channel 先腾出空位就往哪发；
+- 注意：没被选中的生产者如果不取消，它后面的 send 会一直挂起，runBlocking 会永远等下去。
+
+3. SelectClause
+
+select 的子句按返回值形态分三类：
+
+- SelectClause0：无返回值，如 job.onJoin、onTimeout {}；
+- SelectClause1：一个返回值，如 deferred.onAwait、channel.onReceive；
+- SelectClause2：一个返回值加一个额外参数，如 channel.onSend(value)、mutex.onLock；
+- select 至少需要一个子句；只有 else 分支时直接执行 else 不挂起；所有子句都不可用且无 else 时挂起等待；
+- select 等待期间可被取消（抛 CancellationException）。
+
+4. Flow 实现多路复用
+
+Flow 没有可参与 select 的子句，需要降级到 Channel 或改用合并算子：
+
+- flow.produceIn(scope)：把 Flow 转成 ReceiveChannel，之后就能用 onReceive 参与 select（注意作用域结束要 cancel）；
+- merge(flowA, flowB)：并发收集多个流，谁先发射谁先到，只关心合并结果时最简单；
+- combine/zip 用于组合而非竞争：combine 取各流最新值两两组合，zip 按顺序配对。
+
+```kotlin
+import kotlinx.coroutines.*
+import kotlinx.coroutines.flow.*
+
+fun main() = runBlocking {
+    val flowA = flow {
+        emit("A1")
+        delay(200)
+        emit("A2")
+    }
+    val flowB = flow {
+        delay(100)
+        emit("B1")
+    }
+    merge(flowA, flowB).collect { println(it) }
+}
+```
+
+输出：
+
+```
+A1
+B1
+A2
+```
+
+## 六、并发安全
+
+协程在单线程调度器下天然串行，但在多线程调度器或跨线程切换时，共享可变状态仍会出现竞态。
+
+1. Mutex 互斥锁
+
+- 协程版互斥锁，lock/unlock 是挂起函数，等待锁时挂起协程而非阻塞线程，可替代 synchronized/ReentrantLock；
+- 推荐 mutex.withLock {}，异常时也能正确释放；
+- Mutex 不可重入：同一协程重复加锁会死锁（synchronized 可重入）；
+- 还提供 onLock 子句，可参与 select。
+
+```kotlin
+import kotlinx.coroutines.*
+import kotlinx.coroutines.sync.*
+
+fun main() = runBlocking {
+    val mutex = Mutex()
+    var counter = 0
+    val jobs = List(1000) {
+        launch(Dispatchers.Default) {
+            mutex.withLock { counter++ }         // 同一时刻只有一个协程能进来
+        }
+    }
+    jobs.forEach { it.join() }
+    println("counter = $counter")
+}
+```
+
+输出：
+
+```
+counter = 1000
+```
+
+去掉 withLock 后 counter 通常会小于 1000（读-改-写不是原子操作），这就是必须加锁的原因。
+
+2. Semaphore 信号量
+
+- 控制同时执行的并发数：acquire() 获取许可，无许可则挂起；release() 归还；
+- 推荐 semaphore.withPermit {} 自动归还；
+- Mutex 相当于许可数为 1 的 Semaphore，但语义不同：Mutex 强调持有者，Semaphore 不绑定协程、任意协程都能 release，且许可可以有多个；
+- 典型场景：限制并发请求数、限流、资源池；tryAcquire 非挂起，拿不到立即返回 false。
+
+```kotlin
+import kotlinx.coroutines.*
+import kotlinx.coroutines.sync.*
+
+fun main() = runBlocking<Unit> {
+    val semaphore = Semaphore(1)             // 许可数为 1，效果等同互斥；写成 2 就是"最多 2 个并发"
+    launch {
+        semaphore.withPermit {
+            println("A 进入")
+            delay(100)                       // 持有许可期间 B 只能等着
+            println("A 离开")
+        }
+    }
+    launch {
+        semaphore.withPermit {
+            println("B 进入")
+            println("B 离开")
+        }
+    }
+}
+```
+
+输出：
+
+```
+A 进入
+A 离开
+B 进入
+B 离开
+```
+
+限制并发请求数就是把许可数设为上限，例如 `Semaphore(5)` 表示同时最多 5 个请求在跑。
+
+3. 其他并发安全手段
+
+- 单线程约束：Dispatchers.Default.limitedParallelism(1)，把并发改为串行；
+- 原子类：AtomicInteger/AtomicReference 的 CAS；
+- StateFlow 用 update {}（内部 CAS 重试），不要写 value = value + 1（读-改-写非原子）；
+- volatile 只保证可见性，不保证复合操作原子性。
+
+## 七、高频面试问题及解答
 1. Flow冷流特性是什么？带来什么优缺点？
 Flow属于冷流，只有调用末端收集算子时，上游生产者代码才会执行，每一次collect都会从头执行生产逻辑。优点是节约资源，无订阅时不会发起网络、数据库请求；缺点是多次collect会重复执行耗时操作，多订阅场景推荐改用SharedFlow。
 
@@ -93,3 +417,24 @@ started参数三种枚举：
 
 15. Flow会不会造成内存泄漏？常见泄漏场景？
 会。常见场景：未绑定生命周期直接collect、作用域提前销毁但数据流未取消、全局SharedFlow持有页面实例。规避方案：repeatOnLifecycle绑定生命周期、使用viewModelScope管控数据流、页面销毁主动关闭订阅。
+
+16. Channel与Flow的区别？
+Channel是热的有缓冲并发队列，点对点：一个元素只会被一个接收者消费，收发都是挂起函数，用于协程间通信与任务分发；Flow面向数据流，普通Flow是冷流，一个数据可被多个订阅者各自收集，算子丰富，适合数据变换与UI状态。需要"传递"用Channel，需要"变换、订阅"用Flow；channelFlow/callbackFlow是二者的桥接。
+
+17. Channel的容量类型有哪些，send何时挂起？
+RENDEZVOUS(0)：无缓冲，send必须等到有接收者；BUFFERED(-2)：默认64条缓冲，满则挂起；CONFLATED(-1)：只保留最新值，send永不挂起，旧值被覆盖；UNLIMITED(Int.MAX_VALUE)：无界队列，send永不挂起但要注意内存；正整数n：缓冲n条，满则挂起。RENDEZVOUS能提供最天然的背压。
+
+18. Channel关闭后缓冲区里的数据还能取到吗？
+能。close()只关闭发送端，剩余数据仍会被接收方依次消费，取空后再receive抛ClosedReceiveChannelException，for循环正常结束；若close(cause)带异常，接收方会抛出该异常，用receiveCatching()拿ChannelResult可优雅处理而不抛异常。
+
+19. produce与actor的作用和区别？
+produce启动生产者协程返回ReceiveChannel供别处消费，actor启动消费者协程返回SendChannel供别处投递消息；本质都是"launch+Channel"，共享结构化并发与异常传播规则，block执行完自动关闭Channel。produce/actor默认容量都是RENDEZVOUS，建议显式指定。
+
+20. 为什么在协程里用Mutex而不是synchronized？
+synchronized会阻塞线程，而协程挂起时本应释放线程去执行其他任务，用synchronized容易造成线程浪费甚至死锁；Mutex.lock是挂起函数，等待时不占用线程，withLock还能自动释放。注意Mutex不可重入，同一协程重复加锁会死锁。
+
+21. Semaphore和Mutex的区别与适用场景？
+Mutex是互斥量，许可数为1，保证临界区串行执行；Semaphore可指定多个许可，用于限制并发数（如同时最多5个请求）实现限流。Mutex有明确的持有者语义，Semaphore不绑定协程、任意协程都可release。二者等待时都挂起而不阻塞线程。
+
+22. BroadcastChannel为什么被废弃？替代方案是什么？
+BroadcastChannel缓存与背压语义含糊，且长期处于实验状态，1.7.0起已废弃，官方推荐SharedFlow/StateFlow：广播事件用MutableSharedFlow(replay=0, extraBufferCapacity=1)，需要向新订阅者重放最新状态用StateFlow。

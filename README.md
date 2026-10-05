@@ -10,7 +10,7 @@ Kotlin 语法要点、协程与 Flow 的知识梳理，以及高频面试题整�
 | [Kotlin 作用域函数与扩展](<./Kotlin 作用域函数与扩展.md>) | 扩展函数，`apply` / `with` / `run` / `also` / `let` 的参数、返回值与选用场景 |
 | [Kotlin 类初始化与单例模式](<./Kotlin 类初始化与单例模式.md>) | `lateinit`、`lazy` 的三种线程安全模式，单例的四种 Kotlin 实现（饿汉、懒汉、双重校验、静态内部类） |
 | [Kotlin 协程基础知识点与高频面试题](<./Kotlin 协程基础知识点与高频面试题.md>) | 进程/线程/协程对比、CPS 与状态机、CoroutineContext/Job/Dispatcher/Scope、结构化并发、异常处理与取消、Android 应用，26 道高频面试题 |
-| [Kotlin Flow基础知识点与高频面试题](<./Kotlin Flow基础知识点与高频面试题.md>) | 冷流与热流、常用运算符、StateFlow 与 SharedFlow 对比、收集与生命周期，15 道高频面试题 |
+| [Kotlin Channel、Flow基础知识点与高频面试题](<./Kotlin Flow基础知识点与高频面试题.md>) | 冷流与热流、常用运算符、StateFlow 与 SharedFlow 对比、Channel 容量与关闭、select 多路复用、Mutex/Semaphore 并发安全，22 道高频面试题 |
 
 ## 学习心得
 
