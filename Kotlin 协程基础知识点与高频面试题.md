@@ -1,5 +1,73 @@
 # Kotlin 协程基础知识点与高频面试题
 
+> 思维导图速览：先看导图建立整体框架，再按章节深入。
+
+```mermaid
+mindmap
+  root((Kotlin 协程))
+    一 基础概念
+      什么是协程
+        可挂起、可恢复的程序
+        纯用户态并发机制
+      进程 线程 协程
+        资源分配单位、调度单位、用户态任务
+        切换开销：最大、中、最小
+        挂起不阻塞线程
+      Kotlin 的定位
+        JVM 无原生支持，依赖编译器
+        本质更像线程框架
+      原理概述
+        挂起函数与协程构建器
+        等待时线程归还线程池
+    二 实现原理
+      CPS 转换
+        多出隐式 Continuation 参数
+        返回 Any 或 COROUTINE_SUSPENDED
+      Continuation 续体
+        代表剩余计算
+        resumeWith 恢复执行
+      状态机
+        挂起点即状态
+        label 记录执行位置
+        局部变量提升为成员变量
+    三 启动协程
+      runBlocking
+        阻塞当前线程，仅用于测试
+      launch
+        返回 Job，无结果
+      async
+        返回 Deferred，await 取结果
+    四 核心机制
+      上下文与组件
+        CoroutineStart 四种启动模式
+        CoroutineContext 是类似 Map 的索引集合
+        Job 的生命周期与父子层级
+        Dispatchers 的 Default、IO、Main、Unconfined
+        Scope 作用域管理
+        上下文计算从右往左覆盖
+      结构化并发
+        coroutineScope 与 supervisorScope
+        父协程等待所有子协程
+        子协程失败传播给父
+      异常与取消
+        异常向上传播
+        SupervisorJob 子失败不影响兄弟
+        CancellationException 不取消其他协程
+        CoroutineExceptionHandler 兜底
+        协作式取消，cancel 只置为 Cancelling
+        NonCancellable
+        withTimeout 与 withTimeoutOrNull
+    五 Android 应用
+      并发请求组合
+      viewModelScope
+      lifecycleScope
+      LiveData 与 Retrofit
+    六 高频面试题
+      26 道问答
+```
+
+---
+
 ## 一、协程基础概念
 
 ### 1.1 什么是协程
@@ -189,9 +257,17 @@ suspend fun loadData(): Int {
 }
 ```
 
-## 四、核心组件
+## 四、协程核心机制
 
-### 4.1 概览
+本章分三块：
+
+* **4.1 上下文与组件**：构成协程的各个部件（CoroutineStart、CoroutineContext、Job、Dispatcher、Scope）以及上下文如何计算。
+* **4.2 结构化并发**：这些部件如何被组织成父子结构，作用域构建器起什么作用。
+* **4.3 异常处理与取消**：这棵结构在异常和取消时如何收场，以及超时的处理。
+
+### 4.1 上下文与组件
+
+#### 4.1.1 概览
 
 ```kotlin
 public fun CoroutineScope.launch(
@@ -207,7 +283,7 @@ public fun CoroutineScope.launch(
 
 构建协程的 coroutine builder：launch、async，都是 CoroutineScope 类型的扩展方法。查看 CoroutineScope 接口，其中含有 CoroutineContext 的引用。
 
-### 4.2 CoroutineStart 启动模式
+#### 4.1.2 CoroutineStart 启动模式
 
 ```kotlin
 public enum class CoroutineStart {
@@ -227,7 +303,7 @@ public enum class CoroutineStart {
 * CoroutineStart.ATOMIC：立即执行且不可被取消，在协程开始执行之前无法 cancel。
 * CoroutineStart.UNDISPATCHED：立即在当前线程执行协程体，直到第一个挂起点，不经过调度器分发。
 
-### 4.3 CoroutineContext
+#### 4.1.3 CoroutineContext
 
 它包含用户定义的一些数据集合，这些数据与协程密切相关。它类似于 map 集合，可以通过 key 来获取不同类型的数据。
 
@@ -354,7 +430,7 @@ internal class CombinedContext(
 ![](./CombinedContext.jpg)
 ![](./CombinedContext2.png)
 
-### 4.4 Job
+#### 4.1.4 Job
 
 Job 对象表示一个协程作业，是协程的唯一标识，并负责管理协程的生命周期。它还可以有层级关系，一个 Job 可以包含多个子 Job，Job 经历以下一系列状态：新建、活动、正在完成、已完成、正在取消和已取消状态。虽然我们无法访问状态本身，但可以访问 Job 的属性：isActive、isCancelled 和 isCompleted。
 
@@ -362,7 +438,7 @@ Job 对象表示一个协程作业，是协程的唯一标识，并负责管理�
 
 如果协程处于活动状态，则协程失败或调用 job.cancel() 方法将使 Job 处于取消状态（isActive = false, isCancelled = true）。一旦所有的子协程完成了它们的工作，协程将进入取消状态并且 isCompleted = true。
 
-### 4.5 Dispatchers 和线程
+#### 4.1.5 Dispatchers 和线程
 
 Context 中的 CoroutineDispatcher 可以指定协程运行在什么线程上。可以是一个指定的线程、线程池，或者不限。
 
@@ -375,7 +451,7 @@ API 提供了几种选项：
 
 如果不明确指定 dispatcher，协程将会继承它被启动的那个 scope 的 context（其中包含了 dispatcher）。
 
-### 4.6 Scope 作用域
+#### 4.1.6 Scope 作用域
 
 scope 的主要作用就是记录所有的协程，并且可以取消它们。当 launch、async 或 runBlocking 开启新协程的时候，它们自动创建相应的 scope。所有的这些方法都有一个带 receiver 的 lambda 参数，默认的 receiver 类型是 CoroutineScope。
 
@@ -410,7 +486,7 @@ fun main() = runBlocking {
 
 > 总结：A CoroutineScope keeps track of all your coroutines, and it can cancel all of the coroutines started in it.
 
-### 4.7 CoroutineContext 计算
+#### 4.1.7 CoroutineContext 计算
 
 协程上下文是基于这个公式计算的：父级上下文 = 默认值 + 继承的上下文 + 参数
 
@@ -421,7 +497,9 @@ fun main() = runBlocking {
 ![](./CoroutineContext.png)
 ![](./CoroutineContext2.png)
 
-## 五、结构化并发
+### 4.2 结构化并发
+
+#### 4.2.1 什么是结构化并发
 
 这种利用 scope 将协程结构化组织起来的机制，被称为 "structured concurrency"。好处是：
 
@@ -433,7 +511,7 @@ fun main() = runBlocking {
 
 ![](./CoroutineScope2.gif)
 
-作用域构建器
+#### 4.2.2 作用域构建器
 
 `coroutineScope` 和 `supervisorScope` 都是挂起函数，用来在 suspend 函数内部创建一个新的子作用域，并等待里面所有子协程结束。两者的差别只在异常处理上：
 
@@ -525,9 +603,9 @@ supervisorScope 内部是一个 SupervisorJob，job2 的异常不向上传播（
 
 > 注意：supervisorScope 和 SupervisorJob 一样只对直接子协程生效；另外它只是切断了向上传播的链路，异常仍然需要一个出口——通常把 CoroutineExceptionHandler 装在创建作用域的 context 上（子协程会自动继承），否则会走默认的线程异常处理器打印堆栈。
 
-## 六、异常处理与取消
+### 4.3 异常处理与取消
 
-### 6.1 异常向上传播
+#### 4.3.1 异常向上传播
 
 ```kotlin
 fun exceptionWithJob() {
@@ -610,7 +688,7 @@ System.out: CoroutineExceptionHandler got java.lang.ArithmeticException: divide 
 
 子协程上设置的 CoroutineExceptionHandler 不会生效，因为异常会向上传播给父协程处理。
 
-### 6.2 SupervisorJob
+#### 4.3.2 SupervisorJob
 
 内部的取消操作是单向传播，子协程错误不会传播给父协程和它的兄弟协程。这个特性只作用直接子协程，其子协程遵守默认规则。
 
@@ -656,7 +734,7 @@ System.out: job3 end
 
 使用 SupervisorJob 后，job2 的异常不会影响兄弟协程，job1、job3 正常执行完毕。
 
-### 6.3 如果异常是 CancellationException，即使是 Job，也不会取消其他协程
+#### 4.3.3 如果异常是 CancellationException，即使是 Job，也不会取消其他协程
 
 ```kotlin
 fun cancelExceptionWithJob() {
@@ -697,7 +775,7 @@ System.out: job1 end
 
 CancellationException 被视为协程的正常取消，不会触发异常处理器，也不会传播给父协程和兄弟协程。
 
-### 6.4 如果有子异常处理
+#### 4.3.4 如果有子异常处理
 
 ```kotlin
 fun exceptionChildWithJob() {
@@ -744,7 +822,7 @@ System.out: job6 end
 
 用 SupervisorJob 切断了异常向上传播的链路，子作用域自己持有了异常，此时子协程上安装的 CoroutineExceptionHandler 才会生效。
 
-### 6.5 Job.cancel()
+#### 4.3.5 Job.cancel()
 
 取消是协作式的：`job.cancel()` 只是把 Job 置为 Cancelling 状态，并不会强杀正在执行的代码，协程需要在挂起点主动检查取消状态才会真正结束。所以取消之后通常要 `join()` 等待协程收尾，或者直接用 `cancelAndJoin()`。
 
@@ -820,7 +898,7 @@ System.out: main: Now I can quit.
 
 另外取消会沿着父子关系向下传播：父 Job 被取消时，它所有的子协程都会被取消。
 
-### 6.6 取消后仍需执行的挂起代码：NonCancellable
+#### 4.3.6 取消后仍需执行的挂起代码：NonCancellable
 
 协程进入取消状态后，finally 里再调用挂起函数会立刻抛出 CancellationException，清理工作做到一半就断了。这时用 `withContext(NonCancellable)` 包住，这段代码就"取消不掉"了：
 
@@ -864,7 +942,7 @@ System.out: main: Now I can quit.
 
 NonCancellable 是一个单例 Job，永远处于 Active 状态且无法被取消，只能作为 `withContext` 的参数使用。切换过去之后协程就取消不掉了，所以里面的代码要尽量短、可控，用完立刻切回来。
 
-### 6.7 超时：withTimeout 与 withTimeoutOrNull
+#### 4.3.7 超时：withTimeout 与 withTimeoutOrNull
 
 两者用来给一段挂起代码加上超时限制，超时会取消这段代码所在的协程：
 
@@ -904,14 +982,14 @@ System.out: result = null
 
 几个要点：
 
-* TimeoutCancellationException 是 CancellationException 的子类，所以超时只会取消当前协程，不会连累父协程和兄弟协程（对照 6.3）。
+* TimeoutCancellationException 是 CancellationException 的子类，所以超时只会取消当前协程，不会连累父协程和兄弟协程（对照 4.3.3）。
 * withTimeoutOrNull 内部就是捕获了超时异常并返回 null，适合"超时就走降级逻辑"的场景；withTimeout 则适合必须让调用方感知到超时的场景。
 * 超时对 block 内部启动的所有子协程同样生效，因为 withTimeout 内部创建的正是一个作用域。
 * 常见的坑：如果 block 内部把 CancellationException 吞掉了（catch 之后不重新抛出），超时就不会生效。
 
-## 七、协程在 Android 中的应用
+## 五、协程在 Android 中的应用
 
-### 7.1 并发请求组合
+### 5.1 并发请求组合
 
 我们先定义三个 Task，模拟上述场景，Task3 基于 Task1、Task2 返回的结果拼接字符串，每个 Task 通过 sleep 模拟耗时：
 
@@ -961,7 +1039,7 @@ fun test_flow() {
 }
 ```
 
-### 7.2 viewModelScope
+### 5.2 viewModelScope
 
 我们在 Activity 或 Fragment 中使用协程时，要尽量避免使用 GlobalScope。GlobalScope 的生命周期是 process 级别的，所以上面的例子中，即使 Activity 或 Fragment 已经被销毁，协程仍然在执行。
 
@@ -979,7 +1057,7 @@ class MainViewModel : ViewModel() {
 }
 ```
 
-### 7.3 lifecycleScope
+### 5.3 lifecycleScope
 
 ```kotlin
 class MainActivity : AppCompatActivity() {
@@ -1038,7 +1116,7 @@ fun onCreate() {
 
 > 注意：launchWhenStarted 已被标记废弃，推荐使用 `repeatOnLifecycle`，详见 Flow 文档中的说明。
 
-### 7.4 LiveData
+### 5.4 LiveData
 
 ```kotlin
 class MyViewModel : ViewModel() {
@@ -1051,7 +1129,7 @@ class MyViewModel : ViewModel() {
 }
 ```
 
-### 7.5 Retrofit
+### 5.5 Retrofit
 
 Retrofit 从 2.6.0 开始提供了对协程的支持。定义方法的时候加上 suspend 关键字：
 
@@ -1064,7 +1142,7 @@ interface GitHubService {
 }
 ```
 
-## 八、高频面试问题及解答
+## 六、高频面试问题及解答
 
 1. 协程是什么？和线程、进程的区别是什么？
 协程是运行在线程之上、可被挂起和恢复的一段程序，是纯用户态的并发机制。进程是资源分配的最小单位，线程是 CPU 调度的基本单位，二者切换都要陷入内核态，开销大；协程切换只在用户态完成，不涉及内核，所以更轻量。一个线程上可以创建几千个协程，协程挂起时不会阻塞所在线程，该线程可以继续执行其他协程，非常适合 IO 密集型场景。
